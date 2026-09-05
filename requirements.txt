@@ -1,7 +1,5 @@
 streamlit
-pandas
-numpy
 requests
-beautifulsoup4
 trafilatura
 plotly
+matplotlib
