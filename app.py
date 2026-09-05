@@ -8,6 +8,8 @@ import unicodedata
 import threading
 import uuid
 from io import StringIO, BytesIO
+import io
+import streamlit as st
 
 
 from collections import defaultdict
@@ -1078,8 +1080,6 @@ def render_mediacloud_original():
     from datetime import datetime
 
     import matplotlib.pyplot as plt
-    import streamlit as st
-
     # ------------------------------------------------------------
     # Visual identity
     # ------------------------------------------------------------
