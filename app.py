@@ -36,7 +36,7 @@ EXTRACTION_JOBS_LOCK = threading.Lock()
 # TOOL 1: IRaMuTeQ Corpus Builder (CrowdTangle / Any CSV)
 # — unchanged mechanism from the original app.py —
 # ============================================================
-def run_corpus_builder_app():
+def run_corpus_builder_app(forced_source_mode=None):
     import csv
     import io
     import re
@@ -357,16 +357,19 @@ def run_corpus_builder_app():
     This is the text of the second document.""", language=None)
         st.caption("The exact metadata variables depend on the source and the columns you select.")
 
-        st.markdown('<div class="section-title">Choose your input source</div>', unsafe_allow_html=True)
-        source_mode = st.radio(
-            "Input source",
-            ["CrowdTangle", "Any CSV"],
-            horizontal=True,
-            key="input_source_mode",
-            label_visibility="collapsed",
-        )
-
-        st.markdown('<a href="https://mediacloud-iramuteq.streamlit.app/" target="_blank">MediaCloud → IRaMuTeQ app</a>', unsafe_allow_html=True)
+        if forced_source_mode in ("CrowdTangle", "Any CSV"):
+            # The input source was already chosen on the toolkit's landing
+            # page, so it is not asked again here.
+            source_mode = forced_source_mode
+        else:
+            st.markdown('<div class="section-title">Choose your input source</div>', unsafe_allow_html=True)
+            source_mode = st.radio(
+                "Input source",
+                ["CrowdTangle", "Any CSV"],
+                horizontal=True,
+                key="input_source_mode",
+                label_visibility="collapsed",
+            )
 
         st.markdown('<div class="section-title">1. Corpus input</div>', unsafe_allow_html=True)
         if source_mode == "CrowdTangle":
@@ -2644,8 +2647,25 @@ def run_mediacloud_app():
 
 
 # ============================================================
-# ENTRY POINT: choose which tool to use
+# ENTRY POINT: a single landing page where the input source is
+# chosen once, before proceeding into the matching pipeline.
 # ============================================================
+INPUT_SOURCES = {
+    "CrowdTangle": {
+        "label": "CrowdTangle",
+        "description": "Upload a CrowdTangle CSV export. Flexible column mapping, CrowdTangle-specific text cleaning.",
+    },
+    "Any CSV": {
+        "label": "Any CSV",
+        "description": "Upload any CSV file. You choose one text column and at least one metadata column yourself.",
+    },
+    "MediaCloud": {
+        "label": "MediaCloud",
+        "description": "Upload a MediaCloud CSV export. Article text is fetched from each URL and cleaned automatically, with National/Regional press classification and publication statistics.",
+    },
+}
+
+
 def main():
     st.set_page_config(
         page_title="IRaMuTeQ Toolkit",
@@ -2654,21 +2674,46 @@ def main():
         initial_sidebar_state="expanded",
     )
 
-    st.sidebar.markdown("## IRaMuTeQ Toolkit")
-    st.sidebar.markdown("Choose which tool you want to work with:")
-    tool_choice = st.sidebar.radio(
-        "Tool",
-        [
-            "IRaMuTeQ Corpus Builder (CrowdTangle / Any CSV)",
-            "MediaCloud → IRaMuTeQ (web extraction)",
-        ],
-        key="toolkit_choice",
-        label_visibility="collapsed",
-    )
-    st.sidebar.markdown("---")
+    if "toolkit_input_source" not in st.session_state:
+        st.session_state["toolkit_input_source"] = None
 
-    if tool_choice.startswith("IRaMuTeQ Corpus Builder"):
-        run_corpus_builder_app()
+    # ---- Landing page: choose the input source ----
+    if st.session_state["toolkit_input_source"] is None:
+        st.markdown('<div style="font-size:.78rem; letter-spacing:.14em; text-transform:uppercase; color:#667085; font-weight:700; margin-bottom:.5rem;">Open research utility · corpus preparation</div>', unsafe_allow_html=True)
+        st.markdown('<h1 style="font-family:Georgia,\'Times New Roman\',serif; font-size:clamp(2.2rem,4vw,3.65rem); line-height:1.05; color:#111; margin:0; font-weight:600;">IRaMuTeQ Toolkit</h1>', unsafe_allow_html=True)
+        st.markdown(
+            '<div style="font-size:1.08rem; line-height:1.65; color:#444; max-width:900px; margin-top:1rem;">Build a textual corpus for IRaMuTeQ from CrowdTangle exports, any CSV file, or a MediaCloud export. Choose your input source to get started.</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown('<div style="font-family:Georgia,\'Times New Roman\',serif; font-size:1.55rem; color:#111; margin:2.2rem 0 1rem;">Choose your input source</div>', unsafe_allow_html=True)
+
+        cols = st.columns(3)
+        for col, key in zip(cols, INPUT_SOURCES):
+            info = INPUT_SOURCES[key]
+            with col:
+                st.markdown(
+                    f'<div style="border:1px solid #d9dee8; border-radius:12px; padding:1.1rem 1.2rem; background:#fff; min-height:150px;">'
+                    f'<div style="font-weight:700; color:#111; margin-bottom:.4rem;">{info["label"]}</div>'
+                    f'<div style="color:#555; font-size:.92rem; line-height:1.45;">{info["description"]}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+                if st.button(f"Use {info['label']}", key=f"choose_source_{key}", use_container_width=True):
+                    st.session_state["toolkit_input_source"] = key
+                    st.rerun()
+        return
+
+    # ---- Proceed into the matching pipeline ----
+    chosen = st.session_state["toolkit_input_source"]
+    with st.sidebar:
+        st.markdown(f"**Input source:** {chosen}")
+        if st.button("← Change input source", use_container_width=True):
+            st.session_state["toolkit_input_source"] = None
+            st.rerun()
+        st.markdown("---")
+
+    if chosen in ("CrowdTangle", "Any CSV"):
+        run_corpus_builder_app(forced_source_mode=chosen)
     else:
         run_mediacloud_app()
 
