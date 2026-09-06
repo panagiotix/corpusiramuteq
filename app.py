@@ -340,10 +340,28 @@ def run_corpus_builder_app(forced_source_mode=None):
         </style>
         """, unsafe_allow_html=True)
 
+        _page_titles = {
+            "CrowdTangle": (
+                "CrowdTangle to IRaMuTeQ",
+                "Prepare a textual corpus for IRaMuTeQ from a CrowdTangle CSV export, with flexible column mapping and CrowdTangle-specific text cleaning.",
+            ),
+            "Any CSV": (
+                "Any CSV to IRaMuTeQ",
+                "Prepare a textual corpus for IRaMuTeQ from any CSV file, with explicit control over the text and metadata fields.",
+            ),
+        }
+        _page_title, _page_subtitle = _page_titles.get(
+            forced_source_mode,
+            (
+                "IRaMuTeQ Corpus Builder",
+                "Prepare textual corpora for IRaMuTeQ from CrowdTangle exports or from any CSV file, with explicit control over the text and metadata fields.",
+            ),
+        )
+
         st.markdown('<div class="research-kicker">Open research utility · corpus preparation</div>', unsafe_allow_html=True)
-        st.markdown('<h1 class="research-title">IRaMuTeQ Corpus Builder</h1>', unsafe_allow_html=True)
+        st.markdown(f'<h1 class="research-title">{_page_title}</h1>', unsafe_allow_html=True)
         st.markdown(
-            '<div class="research-subtitle">Prepare textual corpora for IRaMuTeQ from CrowdTangle exports or from any CSV file, with explicit control over the text and metadata fields.</div>',
+            f'<div class="research-subtitle">{_page_subtitle}</div>',
             unsafe_allow_html=True,
         )
 
@@ -2668,7 +2686,7 @@ INPUT_SOURCES = {
 
 def main():
     st.set_page_config(
-        page_title="IRaMuTeQ Toolkit",
+        page_title="IRaMuTeQ corpus construction",
         page_icon="◈",
         layout="wide",
         initial_sidebar_state="expanded",
@@ -2679,13 +2697,13 @@ def main():
 
     # ---- Landing page: choose the input source ----
     if st.session_state["toolkit_input_source"] is None:
-        st.markdown('<div style="font-size:.78rem; letter-spacing:.14em; text-transform:uppercase; color:#667085; font-weight:700; margin-bottom:.5rem;">Open research utility · corpus preparation</div>', unsafe_allow_html=True)
-        st.markdown('<h1 style="font-family:Georgia,\'Times New Roman\',serif; font-size:clamp(2.2rem,4vw,3.65rem); line-height:1.05; color:#111; margin:0; font-weight:600;">IRaMuTeQ Toolkit</h1>', unsafe_allow_html=True)
+        st.markdown('<div style="font-size:.78rem; letter-spacing:.14em; text-transform:uppercase; color:#fff; font-weight:700; margin-bottom:.5rem;">Open research utility · corpus preparation</div>', unsafe_allow_html=True)
+        st.markdown('<h1 style="font-family:Georgia,\'Times New Roman\',serif; font-size:clamp(2.2rem,4vw,3.65rem); line-height:1.05; color:#fff; margin:0; font-weight:600;">IRaMuTeQ corpus construction</h1>', unsafe_allow_html=True)
         st.markdown(
-            '<div style="font-size:1.08rem; line-height:1.65; color:#444; max-width:900px; margin-top:1rem;">Build a textual corpus for IRaMuTeQ from CrowdTangle exports, any CSV file, or a MediaCloud export. Choose your input source to get started.</div>',
+            '<div style="font-size:1.08rem; line-height:1.65; color:#fff; max-width:900px; margin-top:1rem;">Build a textual corpus for IRaMuTeQ from CrowdTangle exports, any CSV file, or a MediaCloud export. Choose your input source to get started.</div>',
             unsafe_allow_html=True,
         )
-        st.markdown('<div style="font-family:Georgia,\'Times New Roman\',serif; font-size:1.55rem; color:#111; margin:2.2rem 0 1rem;">Choose your input source</div>', unsafe_allow_html=True)
+        st.markdown('<div style="font-family:Georgia,\'Times New Roman\',serif; font-size:1.55rem; color:#fff; margin:2.2rem 0 1rem;">Choose your input source</div>', unsafe_allow_html=True)
 
         cols = st.columns(3)
         for col, key in zip(cols, INPUT_SOURCES):
