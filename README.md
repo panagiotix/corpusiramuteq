@@ -1,20 +1,23 @@
 # IRaMuTeQ Corpus Builder
 
-A Streamlit application for preparing textual corpora for **IRaMuTeQ** from three kinds of sources:
+A Streamlit application for preparing **IRaMuTeQ-ready textual corpora** from:
 
-1. **MediaCloud** CSV exports — using the original MediaCloud extraction mechanism supplied for this project.
-2. **CrowdTangle** CSV exports — with flexible column mapping and cleaning based on the supplied CrowdTangle scripts.
-3. **Any CSV** — with one user-selected text column and at least one user-selected metadata column.
+- **CrowdTangle CSV exports**, with flexible column mapping and cleaning based on the supplied CrowdTangle scripts.
+- **Any CSV file**, with one user-selected text column and at least one user-selected metadata column.
 
-The application is designed for reproducible corpus preparation: the input data are inspected first, the mapping and cleaning rules are visible, and the generated corpus can be downloaded together with processing diagnostics.
+The application starts with a general IRaMuTeQ-format explanation. The user then chooses the source type and follows the corresponding workflow.
+
+For MediaCloud processing, use the existing dedicated application:
+
+**https://mediacloud-iramuteq.streamlit.app/**
 
 ---
 
-## 1. What is an IRaMuTeQ corpus?
+## 1. IRaMuTeQ corpus format
 
-An IRaMuTeQ corpus is a plain UTF-8 text file in which each document begins with a header line starting with `****`. Metadata variables are written after the four asterisks using the form `*variable_value`.
+IRaMuTeQ corpora are plain-text files in which each document starts with a header beginning with `****`. Metadata variables follow the form `*variable_value`. The text of the document follows on the next line.
 
-For example:
+Example:
 
 ```text
 **** *source_example *year_2025 *country_greece *rawnb_12
@@ -24,157 +27,108 @@ This is the text of the first document.
 This is the text of the second document.
 ```
 
-The metadata variables depend on the source and the mapping selected by the user.
+The exact metadata variables depend on the source and the columns selected by the user.
 
-### Important formatting rule
+### Important formatting rules
 
-The asterisk `*` has a structural meaning in IRaMuTeQ. Consequently, text containing literal asterisks is cleaned before export in the CrowdTangle workflow and can optionally be cleaned in the generic CSV workflow.
-
-Tabs are also treated as reserved separators and are replaced with spaces in corpus text.
+- `*` is structural in IRaMuTeQ. In the CrowdTangle workflow, literal asterisks in the text and description are replaced with `_`. In the generic CSV workflow, replacement of `*` can be enabled or disabled by the user.
+- Tabs are reserved for IRaMuTeQ metadata and are therefore replaced with spaces in corpus text.
+- The application keeps the original CSV row number as `rawnb`, allowing corpus documents to be traced back to the source dataset.
 
 ---
 
-## 2. Application workflow
+## 2. CrowdTangle workflow
 
-The application uses a common interface while keeping the processing logic specific to each source.
+CrowdTangle exports do not necessarily use exactly the same column names. The application therefore **detects likely columns and suggests a mapping**, while allowing the user to change every selection.
 
-### MediaCloud
+### Typical mappings
 
-The MediaCloud mode retains the extraction mechanism from the original MediaCloud → IRaMuTeQ application supplied with this project.
+The application looks for likely equivalents of:
 
-The workflow is:
+| Purpose | Typical CrowdTangle field |
+|---|---|
+| Post text | `Message` |
+| Page/group | `Page Name` / `Group Name` |
+| Date | `Post Created Date` |
+| Description | `Description` / `Page Description` |
+| Optional metadata | Other CSV columns |
 
-1. Upload the MediaCloud CSV.
-2. Check the required fields.
-3. Select the media sources to process.
-4. Optionally select additional CSV columns as metadata.
-5. Review the IRaMuTeQ preview.
-6. Retrieve the article pages and extract article text.
-7. Remove duplicate URLs.
-8. Apply the MediaCloud metadata and source classification rules.
-9. Validate article length and extraction success.
-10. Export the IRaMuTeQ corpus, failure log, and publication statistics.
+The exact spelling does not need to match.
 
-The original MediaCloud extraction settings are retained, including:
+### Cleaning rules
 
-- request delay, default **1.5 seconds**;
-- minimum extracted article length, default **100 characters**;
-- MediaCloud fields `media_name`, `publish_date`, and `url`;
-- National / Regional press classification for Greek corpora;
-- original CSV row traceability through `rawnb`;
-- URL deduplication;
-- extraction diagnostics and failure categories;
-- cancellation during long extraction jobs;
-- initial-versus-saved publication statistics.
+The cleaning follows the supplied CrowdTangle scripts:
 
-For non-Greek corpora, the built-in Greek National / Regional classification can be disabled.
+1. Post text is cleaned for IRaMuTeQ formatting.
+2. Literal `*` characters are replaced with `_`.
+3. Tabs and unnecessary whitespace are normalised.
+4. Page/group names are converted into safe metadata values.
+5. A mapped date can generate `year` and `ym` metadata.
+6. An optional page/group description can be appended to the post text.
+7. Duplicate generated records are removed.
+8. `rawnb` preserves the original CSV row number.
 
-### CrowdTangle
+### Interaction variables
 
-CrowdTangle exports can have different column names depending on the export and workflow. The application therefore **suggests** likely columns but does not require one exact CrowdTangle header schema.
+The supplied CrowdTangle scripts calculate variables such as total interactions, likes, and likes at posting. These variables are **not automatically added to the IRaMuTeQ header**, following the supplied scripts and their warning that interaction variables may cause problems during treatment. If needed, they can be selected explicitly as additional metadata.
 
-The user maps:
+---
 
-- post/message text;
-- page or group name;
-- post date;
-- page/group description;
-- optional additional metadata columns.
+## 3. Generic CSV workflow
 
-The cleaning follows the supplied CrowdTangle scripts, including:
+The generic CSV workflow intentionally makes as few assumptions as possible about the dataset.
 
-- replacement of `*` in post text and descriptions with `_`;
-- sanitisation of page/group names for IRaMuTeQ metadata;
-- derivation of `year` and `ym` from a mapped date when possible;
-- duplicate detection based on the generated record;
-- preservation of the original CSV row through `rawnb`.
-
-The supplied scripts also calculate interaction-related variables such as interactions, likes, and likes-at-posting. These are **not automatically inserted into the IRaMuTeQ header**, following the supplied scripts and their warning that such variables can cause treatment problems. They can instead be selected as optional metadata when appropriate.
-
-### Any CSV
-
-The generic CSV mode deliberately makes very few assumptions about the dataset.
-
-The user must select:
+The user selects:
 
 - **exactly one text column**;
 - **at least one metadata column**.
 
-All selected metadata columns are represented in the IRaMuTeQ header. The application also adds `rawnb`, which records the original CSV row number and makes it possible to trace corpus documents back to their input record.
+All selected metadata columns are included in the IRaMuTeQ header. The application additionally adds `rawnb` for traceability.
+
+This makes the workflow suitable for CSV files produced by other platforms, surveys, archives, exports, or manually prepared datasets.
 
 ---
 
-## 3. Input requirements
+## 4. CSV reading
 
-### MediaCloud
+The application supports common delimiter formats, including:
 
-The MediaCloud CSV must contain:
+- comma `,`
+- semicolon `;`
+- tab
+- pipe `|`
+- colon `:` as a fallback
 
-```text
-media_name
-publish_date
-url
-```
-
-Each row represents one MediaCloud article record.
-
-### CrowdTangle
-
-There is no single mandatory header spelling. The application detects likely fields and lets the user correct the mapping.
-
-Typical fields include equivalents of:
-
-```text
-Page Name
-Post Created Date
-Message
-Description / Page Description
-Total Interactions
-Likes
-Likes at Posting
-```
-
-The actual column names may vary.
-
-### Generic CSV
-
-Any CSV can be used provided it contains:
-
-- one column containing the text to analyse;
-- at least one other column that can serve as metadata.
-
-The application supports common CSV delimiters, including comma, semicolon, tab, and pipe-separated files.
+UTF-8 files and UTF-8 files with a BOM are supported. CSV headers are normalised to remove BOM characters and unnecessary surrounding quotation marks.
 
 ---
 
-## 4. Outputs
+## 5. Output
 
-Depending on the selected source, the application can produce:
+After processing, the application provides:
 
 ### IRaMuTeQ corpus
 
-A UTF-8 `.txt` file containing the cleaned corpus and IRaMuTeQ headers.
+A UTF-8 `.txt` file containing the generated IRaMuTeQ documents.
 
-### Processing / failure log
+### Processing log
 
-A text file documenting records that could not be included, such as:
+A text log recording records that could not be included, including empty text and duplicate records.
 
-- missing metadata;
-- invalid URLs;
-- request errors;
-- article extraction failures;
-- articles below the minimum length;
-- duplicate records.
+### Processing diagnostics
 
-### MediaCloud publication statistics
+The interface reports:
 
-The MediaCloud workflow also produces statistics comparing records in the selected input with articles successfully saved to the generated corpus.
+- number of input records;
+- number of saved documents;
+- number of duplicates removed;
+- number of failed or empty records.
 
 ---
 
-## 5. Installation
+## 6. Installation
 
-Python 3.10+ is recommended.
+Python 3.10 or newer is recommended.
 
 Create a virtual environment:
 
@@ -194,29 +148,25 @@ On Windows:
 .venv\Scripts\activate
 ```
 
-Install dependencies:
+Install the dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Start the application:
+Run the application:
 
 ```bash
 streamlit run app.py
 ```
 
-The application will normally be available at:
-
-```text
-http://localhost:8501
-```
+The application is normally available at `http://localhost:8501`.
 
 ---
 
-## 6. Streamlit Cloud deployment
+## 7. Streamlit Community Cloud
 
-The repository/folder should contain at least:
+The project can be deployed directly from a GitHub repository. The repository should contain:
 
 ```text
 iramuteq_streamlit/
@@ -228,90 +178,46 @@ iramuteq_streamlit/
     └── config.toml
 ```
 
-For Streamlit Community Cloud:
+On Streamlit Community Cloud:
 
-1. Create or use a GitHub repository.
-2. Upload the contents of this folder.
-3. Create a new Streamlit app.
-4. Select the repository and branch.
-5. Set the main file to `app.py`.
-6. Deploy.
+1. Push the project to GitHub.
+2. Create a new Streamlit app.
+3. Select the repository and branch.
+4. Set the main file to `app.py`.
+5. Deploy.
 
-The dependencies are installed from `requirements.txt`.
-
----
-
-## 7. Dependencies
-
-The application uses:
-
-- **Streamlit** — web interface;
-- **Requests** — MediaCloud article retrieval;
-- **Trafilatura** — article-text extraction;
-- **Plotly** — interactive visualisation support;
-- **Matplotlib** — MediaCloud publication-statistics output;
-- **Pandas / NumPy** — available for data-processing extensions.
-
-See `requirements.txt` for the deployment environment.
+Streamlit installs the Python packages listed in `requirements.txt`.
 
 ---
 
-## 8. Reproducibility and traceability
+## 8. Design principles
 
-The application keeps the original row number of an input record as `rawnb`.
+The application follows four principles:
 
-For example:
+**Source-specific cleaning.** CrowdTangle cleaning follows the supplied scripts rather than imposing a generic social-media schema.
+
+**User-controlled mapping.** CSV column names can vary; users can inspect and change the suggested mapping.
+
+**IRaMuTeQ safety.** Structural characters are cleaned before export, and the generated corpus can be previewed before construction.
+
+**Traceability.** The `rawnb` field links generated documents back to their original CSV row.
+
+---
+
+## 9. Project structure
 
 ```text
-**** *source_kathimerini_gr *year_2025 *yearmonth_2025_04 *type_nationalpress *rawnb_127
-Article text...
+iramuteq_streamlit/
+├── app.py                 # Streamlit application
+├── requirements.txt       # Python dependencies
+├── README.md              # Project documentation
+├── .gitignore             # Git exclusions
+└── .streamlit/
+    └── config.toml        # Streamlit configuration
 ```
 
-This makes it possible to connect a document in the IRaMuTeQ corpus back to the corresponding row in the source CSV.
-
-When reporting corpus construction, users should record at least:
-
-- source type;
-- input filename/version;
-- date of processing;
-- selected metadata mappings;
-- MediaCloud request delay, if applicable;
-- minimum article length, if applicable;
-- any source-specific exclusions or cleaning choices.
-
 ---
 
-## 9. Existing MediaCloud application
+## 10. Credits and methodological reference
 
-The original MediaCloud-only application remains available here:
-
-https://mediacloud-iramuteq.streamlit.app/
-
-The unified application keeps the MediaCloud extraction mechanism from the supplied original application while adding the CrowdTangle and generic CSV workflows.
-
----
-
-## 10. Credits
-
-**IRaMuTeQ Corpus Builder**
-
-Created by **Panos Tsimpoukis**, with the help of ChatGPT.
-
-Affiliations:
-
-- LERASS (Université de Toulouse)
-- PhEPoC-ST (NTUA)
-
-The CrowdTangle cleaning logic is based on scripts supplied by **Lucie Loubère**.
-
-The MediaCloud workflow is based on the original MediaCloud → IRaMuTeQ application supplied for this project.
-
----
-
-## 11. Notes and limitations
-
-This application prepares and cleans corpus data; it does not perform the IRaMuTeQ statistical analyses themselves.
-
-For web-based MediaCloud extraction, article availability and website structure can change over time. Failed requests and extraction failures are therefore expected for some datasets and should be reviewed in the failure log.
-
-For research use, retain the original input CSV alongside the generated corpus and processing log so that the transformation remains auditable.
+The CrowdTangle cleaning logic is based on the CrowdTangle → IRaMuTeQ scripts supplied for this project, authored by **Lucie Loubère**. The scripts are treated as the methodological reference for the CrowdTangle-specific cleaning and metadata choices implemented here.
