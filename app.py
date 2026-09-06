@@ -2697,6 +2697,25 @@ def main():
 
     # ---- Landing page: choose the input source ----
     if st.session_state["toolkit_input_source"] is None:
+        # Small credit, bottom-left of the landing page only.
+        st.markdown(
+            """
+            <style>
+            .app-credit {
+                position: fixed;
+                bottom: 6px;
+                left: 10px;
+                font-size: 0.7rem;
+                color: #fff;
+                opacity: 0.75;
+                z-index: 9999;
+                pointer-events: none;
+            }
+            </style>
+            <div class="app-credit">Created by Panos Tsimpoukis, LERASS (UT) · PhEPoC-ST (NTUA)</div>
+            """,
+            unsafe_allow_html=True,
+        )
         st.markdown('<div style="font-size:.78rem; letter-spacing:.14em; text-transform:uppercase; color:#fff; font-weight:700; margin-bottom:.5rem;">Open research utility · corpus preparation</div>', unsafe_allow_html=True)
         st.markdown('<h1 style="font-family:Georgia,\'Times New Roman\',serif; font-size:clamp(2.2rem,4vw,3.65rem); line-height:1.05; color:#fff; margin:0; font-weight:600;">IRaMuTeQ corpus construction</h1>', unsafe_allow_html=True)
         st.markdown(
