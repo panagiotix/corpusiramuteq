@@ -293,6 +293,17 @@ def main():
     .citation-box { border-left:3px solid #172033; background:#fff; padding:.85rem 1rem; color:#475467; font-size:.9rem; line-height:1.55; margin:1rem 0 1.5rem; }
     .footer-line { border-top:1px solid var(--line); margin-top:3rem; padding-top:1rem; color:#667085; font-size:.82rem; }
     .stApp p,.stApp label,.stApp span { color:#111; }
+    /* Keep IRaMuTeQ examples/previews fully legible. Streamlit's syntax
+       highlighting creates nested spans, so the global span rule above must
+       not be allowed to turn parts of the corpus black. */
+    [data-testid="stCode"] pre,
+    [data-testid="stCode"] code,
+    [data-testid="stCode"] code span {
+        color:#fff !important;
+        -webkit-text-fill-color:#fff !important;
+        background:#191c24 !important;
+    }
+    [data-testid="stCode"] pre { overflow-x:auto !important; }
     [data-testid="stSidebar"] { background:#111!important; }
     [data-testid="stSidebar"] * { color:#fff!important; }
     .stButton>button,.stDownloadButton>button { border-radius:8px; font-weight:600; color:#fff !important; -webkit-text-fill-color:#fff !important; background:#111827 !important; border-color:#111827 !important; }
@@ -321,7 +332,7 @@ def main():
 This is the text of the first document.
 
 **** *source_example *year_2025 *country_france *rawnb_13
-This is the text of the second document.""", language="text")
+This is the text of the second document.""", language=None)
     st.caption("The exact metadata variables depend on the source and the columns you select.")
 
     st.markdown('<div class="section-title">Choose your input source</div>', unsafe_allow_html=True)
@@ -437,7 +448,7 @@ This is the text of the second document.""", language="text")
             if year and month: meta.append(("ym", f"{year}-{month}"))
         for c in extra_cols: meta.append((c, p.get(c, "")))
         meta.append(("rawnb", p.get("_rawnb", "")))
-        st.code(build_header(meta) + "\n" + text, language="text")
+        st.code(build_header(meta) + "\n" + text, language=None)
 
         if st.button("Build CrowdTangle corpus", type="primary", use_container_width=True):
             corpus, log, stats = build_crowdtangle_corpus(
@@ -465,7 +476,7 @@ This is the text of the second document.""", language="text")
         preview_text = generic_cleaner(p.get(text_col, ""))
         preview_meta = [(c, p.get(c, "")) for c in metadata_cols]
         preview_meta.append(("rawnb", p.get("_rawnb", "")))
-        st.code(build_header(preview_meta) + "\n" + preview_text, language="text")
+        st.code(build_header(preview_meta) + "\n" + preview_text, language=None)
 
         if st.button("Build generic CSV corpus", type="primary", use_container_width=True):
             corpus, log, stats = build_generic_corpus(rows, text_col, metadata_cols, generic_cleaner)
