@@ -580,7 +580,6 @@ def main():
         initial_sidebar_state="expanded",
     )
 
-    # Stylesheet combining styles for both applications cleanly
     st.markdown("""
     <style>
     :root { --academic-ink: #172033; --academic-muted: #667085; --academic-line: #d9dee8; --academic-paper: #fbfcfe; }
@@ -622,7 +621,6 @@ def main():
     </style>
     """, unsafe_allow_html=True)
 
-    # Global Selector for Case Selection
     st.markdown('<div class="research-kicker">Open research utility · corpus preparation</div>', unsafe_allow_html=True)
     st.markdown('<h1 class="research-title">IRaMuTeQ Corpus Builder</h1>', unsafe_allow_html=True)
     
@@ -635,9 +633,6 @@ def main():
 
     st.markdown("---")
 
-    # ============================================================
-    # CASE 1: MEDIACLOUD ENGINE
-    # ============================================================
     if app_choice == "MediaCloud → IRaMuTeQ (Web Extraction Workflow)":
         st.markdown(
             '<div class="research-subtitle">'
@@ -841,9 +836,6 @@ def main():
 
         extraction_monitor()
 
-    # ============================================================
-    # CASE 2: CROWDTANGLE / GENERIC CSV ENGINE
-    # ============================================================
     else:
         st.markdown(
             '<div class="research-subtitle">Prepare textual corpora for IRaMuTeQ from CrowdTangle exports or from any CSV file, with explicit control over text and metadata fields.</div>',
