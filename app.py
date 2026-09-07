@@ -159,6 +159,148 @@ def run_corpus_builder_app(forced_source_mode=None):
         return clean_text(text)
 
 
+    # ------------------------------------------------------------
+    # Optional, user-controlled advanced cleaning
+    # ------------------------------------------------------------
+    # Each step below is independently toggleable in the UI so the
+    # researcher always knows exactly what was changed in their text,
+    # and can opt out of anything they disagree with.
+
+    _GREEK_LETTER_CLASS = r"[\u0370-\u03FF\u1F00-\u1FFFa-zA-Z]"
+    _URL_RE = re.compile(r"https?://\S+")
+    _HASHTAG_MENTION_RE = re.compile(r"[#@](\w+)", re.UNICODE)
+    _REPEATED_PUNCT_RE = re.compile(r"([.!?…])\1{2,}")
+    _FINAL_SIGMA_RE = re.compile(r"σ(?!" + _GREEK_LETTER_CLASS + r")")
+
+    def convert_polytonic_to_monotonic(text):
+        """Best-effort conversion from polytonic to monotonic Greek.
+
+        This unifies the grave and circumflex (perispomeni) stress marks
+        with the acute accent, and drops the smooth/rough breathings and
+        the iota subscript. It is a LOSSY, approximate transformation:
+        it cannot recover which stress accent a word originally carried
+        in cases where that distinction mattered, and it will also affect
+        any other accented text (e.g. French or other languages quoted
+        inside the corpus) that happens to use the same combining marks.
+        Only enable this if you understand and accept that trade-off.
+        """
+        if not text:
+            return text
+        decomposed = unicodedata.normalize("NFD", text)
+        out = []
+        for ch in decomposed:
+            code = ord(ch)
+            if code in (0x0300, 0x0342):  # grave, perispomeni -> acute
+                out.append("\u0301")
+            elif code in (0x0313, 0x0314, 0x0345):  # breathings, iota subscript -> drop
+                continue
+            else:
+                out.append(ch)
+        return unicodedata.normalize("NFC", "".join(out))
+
+
+    def smart_lowercase(text):
+        """Lowercase text while fixing Greek word-final sigma.
+
+        Python's built-in str.lower() always turns Σ/σ into 'σ', even at
+        the end of a word, where standard Greek orthography requires the
+        final form 'ς'. Without this fix, lowercasing ALL-CAPS posts would
+        introduce spelling errors (e.g. "ΛΑΘΡΟΜΕΤΑΝΑΣΤΕΣ" -> "λαθρομεταναστεσ"
+        instead of "λαθρομετανάστες").
+        """
+        if not text:
+            return text
+        lowered = text.lower()
+        return _FINAL_SIGMA_RE.sub("ς", lowered)
+
+
+    def apply_advanced_cleaning(text, options):
+        """Apply the optional cleaning steps selected in the UI, in a
+        fixed, predictable order."""
+        if not text:
+            return text
+        options = options or {}
+        if options.get("polytonic_to_monotonic"):
+            text = convert_polytonic_to_monotonic(text)
+        if options.get("remove_urls"):
+            text = _URL_RE.sub(" ", text)
+        if options.get("strip_hashtags_mentions"):
+            text = _HASHTAG_MENTION_RE.sub(r"\1", text)
+        if options.get("normalize_punctuation"):
+            text = _REPEATED_PUNCT_RE.sub(r"\1\1\1", text)
+        if options.get("lowercase"):
+            text = smart_lowercase(text)
+        return re.sub(r"[ \t]+", " ", text).strip()
+
+
+    def render_advanced_cleaning_options(key_prefix):
+        """Render the advanced cleaning checkboxes/inputs and return
+        (options_dict, min_length)."""
+        st.markdown("**Advanced cleaning (optional)** — each option below changes the corpus text; review the preview after toggling.")
+        c1, c2 = st.columns(2)
+        with c1:
+            lowercase = st.checkbox(
+                "Convert text to lowercase",
+                value=True,
+                key=f"{key_prefix}_lowercase",
+                help="Recommended: without this, the same word typed in lowercase, Capitalized, and ALL CAPS is counted as three different words. Final sigma (ς) is handled correctly.",
+            )
+            remove_urls = st.checkbox(
+                "Remove URLs",
+                value=True,
+                key=f"{key_prefix}_remove_urls",
+                help="Strips http(s):// links (including CrowdTangle's duplicated 'url1:=:url2' export artifact), which carry no lexical value.",
+            )
+            strip_tags = st.checkbox(
+                "Strip # and @ symbols (keep the word)",
+                value=True,
+                key=f"{key_prefix}_strip_tags",
+                help="'#Greece' becomes 'Greece' and '@someuser' becomes 'someuser'.",
+            )
+        with c2:
+            normalize_punct = st.checkbox(
+                "Normalize repeated punctuation",
+                value=True,
+                key=f"{key_prefix}_normalize_punct",
+                help="Collapses runs such as '.....' or '!!!!!' down to three characters.",
+            )
+            dedupe_text_only = st.checkbox(
+                "Remove duplicate posts (by text content)",
+                value=True,
+                key=f"{key_prefix}_dedupe_text_only",
+                help="Two posts with identical text (e.g. a reposted message) are treated as duplicates even if their page, date, or other metadata differ. Without this, exact copy-paste campaigns can inflate word frequencies.",
+            )
+            min_length = st.number_input(
+                "Minimum text length (characters, 0 = no filter)",
+                min_value=0,
+                max_value=2000,
+                value=0,
+                step=10,
+                key=f"{key_prefix}_min_length",
+                help="Documents shorter than this, after cleaning, are excluded and logged instead of being saved.",
+            )
+        polytonic_to_monotonic = st.checkbox(
+            "Convert polytonic accents to monotonic (experimental, lossy)",
+            value=False,
+            key=f"{key_prefix}_polytonic",
+            help=(
+                "Greek text sometimes mixes the modern monotonic accent system with older polytonic "
+                "diacritics (e.g. quoted historical or religious text), which IRaMuTeQ treats as different "
+                "word forms. This option unifies stress marks and drops breathings/iota subscript to reduce "
+                "that fragmentation. It is an approximation, not a linguistically exact conversion, and it can "
+                "erase distinctions that mattered in the original text — leave it off if you are unsure."
+            ),
+        )
+        options = {
+            "lowercase": lowercase,
+            "remove_urls": remove_urls,
+            "strip_hashtags_mentions": strip_tags,
+            "normalize_punctuation": normalize_punct,
+            "polytonic_to_monotonic": polytonic_to_monotonic,
+        }
+        return options, int(min_length), dedupe_text_only
+
+
     def extract_year_month(value):
         if not value:
             return None, None
@@ -221,36 +363,43 @@ def run_corpus_builder_app(forced_source_mode=None):
 
 
 
-    def build_generic_corpus(rows, text_col, metadata_cols, cleaner):
+    def build_generic_corpus(rows, text_col, metadata_cols, cleaner, advanced_options=None, min_length=0, dedupe_on_text_only=False):
         output = io.StringIO()
         log = io.StringIO()
-        saved = failed = duplicates = empty_text = 0
+        saved = failed = duplicates = empty_text = filtered_short = 0
         seen = set()
         for row in rows:
             rawnb = row.get("_rawnb", "")
             text = cleaner(row.get(text_col, ""))
+            text = apply_advanced_cleaning(text, advanced_options)
             if not text:
                 failed += 1; empty_text += 1
                 log.write(f"[ROW {rawnb}]\nerror: Empty text in selected column '{text_col}'\n{'-'*70}\n\n")
                 continue
+            if min_length and len(text) < min_length:
+                failed += 1; filtered_short += 1
+                log.write(f"[ROW {rawnb}]\nerror: Text shorter than the minimum length ({len(text)} < {min_length} characters)\n{'-'*70}\n\n")
+                continue
             meta = [(c, row.get(c, "")) for c in metadata_cols]
             meta.append(("rawnb", rawnb))
             record = build_header(meta) + "\n" + text
-            if record in seen:
+            dedupe_key = text if dedupe_on_text_only else record
+            if dedupe_key in seen:
                 duplicates += 1
-                log.write(f"[ROW {rawnb}]\nerror: Duplicate corpus record\n{'-'*70}\n\n")
+                what = "text (identical to an earlier row, ignoring metadata)" if dedupe_on_text_only else "record"
+                log.write(f"[ROW {rawnb}]\nerror: Duplicate corpus {what}\n{'-'*70}\n\n")
                 continue
-            seen.add(record)
+            seen.add(dedupe_key)
             output.write(record + "\n\n")
             saved += 1
-        stats = {"input": len(rows), "saved": saved, "failed": failed, "duplicates": duplicates, "empty_text": empty_text}
+        stats = {"input": len(rows), "saved": saved, "failed": failed, "duplicates": duplicates, "empty_text": empty_text, "filtered_short": filtered_short}
         return output.getvalue().encode("utf-8"), log.getvalue().encode("utf-8"), stats
 
 
-    def build_crowdtangle_corpus(rows, text_col, group_col, date_col, desc_col, include_description, extra_cols):
+    def build_crowdtangle_corpus(rows, text_col, group_col, date_col, desc_col, include_description, extra_cols, advanced_options=None, min_length=0, dedupe_on_text_only=False):
         output = io.StringIO()
         log = io.StringIO()
-        saved = failed = duplicates = empty_text = 0
+        saved = failed = duplicates = empty_text = filtered_short = 0
         seen = set()
         for row in rows:
             rawnb = row.get("_rawnb", "")
@@ -259,9 +408,14 @@ def run_corpus_builder_app(forced_source_mode=None):
                 desc = clean_crowdtangle_text(row.get(desc_col, ""))
                 if desc:
                     text = (text + "\n" + desc).strip() if text else desc
+            text = apply_advanced_cleaning(text, advanced_options)
             if not text:
                 failed += 1; empty_text += 1
                 log.write(f"[ROW {rawnb}]\nerror: Empty CrowdTangle text\n{'-'*70}\n\n")
+                continue
+            if min_length and len(text) < min_length:
+                failed += 1; filtered_short += 1
+                log.write(f"[ROW {rawnb}]\nerror: Text shorter than the minimum length ({len(text)} < {min_length} characters)\n{'-'*70}\n\n")
                 continue
             meta = []
             if group_col != "— none —":
@@ -278,14 +432,16 @@ def run_corpus_builder_app(forced_source_mode=None):
                 meta.append((c, row.get(c, "")))
             meta.append(("rawnb", rawnb))
             record = build_header(meta) + "\n" + text
-            if record in seen:
+            dedupe_key = text if dedupe_on_text_only else record
+            if dedupe_key in seen:
                 duplicates += 1
-                log.write(f"[ROW {rawnb}]\nerror: Duplicate CrowdTangle record\n{'-'*70}\n\n")
+                what = "text (identical to an earlier row, ignoring metadata)" if dedupe_on_text_only else "record"
+                log.write(f"[ROW {rawnb}]\nerror: Duplicate CrowdTangle {what}\n{'-'*70}\n\n")
                 continue
-            seen.add(record)
+            seen.add(dedupe_key)
             output.write(record + "\n\n")
             saved += 1
-        stats = {"input": len(rows), "saved": saved, "failed": failed, "duplicates": duplicates, "empty_text": empty_text}
+        stats = {"input": len(rows), "saved": saved, "failed": failed, "duplicates": duplicates, "empty_text": empty_text, "filtered_short": filtered_short}
         return output.getvalue().encode("utf-8"), log.getvalue().encode("utf-8"), stats
 
 
@@ -465,6 +621,8 @@ def run_corpus_builder_app(forced_source_mode=None):
             else:
                 st.session_state["ct_include_desc"] = False
 
+            ct_advanced_options, ct_min_length, ct_dedupe_text_only = render_advanced_cleaning_options("ct")
+
             metadata_candidates = []
             if group_col != "— none —": metadata_candidates.append(("groupe", group_col))
             if date_col != "— none —": metadata_candidates.append(("date", date_col))
@@ -481,6 +639,7 @@ def run_corpus_builder_app(forced_source_mode=None):
                 desc = clean_crowdtangle_text(p.get(desc_col, ""))
                 if desc:
                     text = (text + "\n" + desc).strip()
+            text = apply_advanced_cleaning(text, ct_advanced_options)
             meta = []
             if group_col != "— none —": meta.append(("groupe", p.get(group_col, "")))
             if date_col != "— none —":
@@ -496,7 +655,9 @@ def run_corpus_builder_app(forced_source_mode=None):
             if st.button("Build CrowdTangle corpus", type="primary", use_container_width=True):
                 corpus, log, stats = build_crowdtangle_corpus(
                     rows, text_col, group_col, date_col, desc_col,
-                    bool(st.session_state.get("ct_include_desc")), extra_cols
+                    bool(st.session_state.get("ct_include_desc")), extra_cols,
+                    advanced_options=ct_advanced_options, min_length=ct_min_length,
+                    dedupe_on_text_only=ct_dedupe_text_only,
                 )
                 show_local_result("CrowdTangle", corpus, log, stats, "crowdtangle_iramuteq.txt", "crowdtangle_processing_log.txt")
 
@@ -514,15 +675,22 @@ def run_corpus_builder_app(forced_source_mode=None):
             clean_asterisks = st.checkbox("Replace `*` with `_` in text (recommended for IRaMuTeQ)", value=True)
             generic_cleaner = lambda x: clean_text(x, replace_asterisks=clean_asterisks)
 
+            csv_advanced_options, csv_min_length, csv_dedupe_text_only = render_advanced_cleaning_options("csv")
+
             st.markdown('<div class="section-title">4. Preview</div>', unsafe_allow_html=True)
             p = rows[0]
             preview_text = generic_cleaner(p.get(text_col, ""))
+            preview_text = apply_advanced_cleaning(preview_text, csv_advanced_options)
             preview_meta = [(c, p.get(c, "")) for c in metadata_cols]
             preview_meta.append(("rawnb", p.get("_rawnb", "")))
             st.code(build_header(preview_meta) + "\n" + preview_text, language=None)
 
             if st.button("Build generic CSV corpus", type="primary", use_container_width=True):
-                corpus, log, stats = build_generic_corpus(rows, text_col, metadata_cols, generic_cleaner)
+                corpus, log, stats = build_generic_corpus(
+                    rows, text_col, metadata_cols, generic_cleaner,
+                    advanced_options=csv_advanced_options, min_length=csv_min_length,
+                    dedupe_on_text_only=csv_dedupe_text_only,
+                )
                 show_local_result("Generic CSV", corpus, log, stats, "csv_iramuteq.txt", "csv_processing_log.txt")
 
         if st.session_state.get("last_local_result"):
@@ -530,11 +698,12 @@ def run_corpus_builder_app(forced_source_mode=None):
             st.markdown('<div class="section-title">5. Research outputs</div>', unsafe_allow_html=True)
             st.success(f"{result['label']} corpus construction completed.")
             r = result["stats"]
-            a = st.columns(4)
+            a = st.columns(5)
             a[0].metric("Input records", r["input"])
             a[1].metric("Saved documents", r["saved"])
             a[2].metric("Duplicates removed", r["duplicates"])
-            a[3].metric("Failed / empty", r["failed"])
+            a[3].metric("Too short (filtered)", r.get("filtered_short", 0))
+            a[4].metric("Failed / empty", r["failed"])
             d1, d2 = st.columns(2)
             with d1:
                 st.download_button("Download IRaMuTeQ corpus", result["corpus"], result["corpus_name"], "text/plain", use_container_width=True, key="local_corpus_download")
