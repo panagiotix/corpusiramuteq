@@ -115,13 +115,35 @@ def run_corpus_builder_app(forced_source_mode=None):
         return raw, reader.fieldnames, rows, delimiter
 
 
-    def clean_custom_metadata_token(value, fallback="missing"):
+    def clean_metadata_field_name(name, fallback="metadata"):
+        """Cleans a metadata *field name* for the IRaMuTeQ header.
+
+        Field names must be a single word with no separators, since the
+        underscore is reserved to separate the field name from its value
+        (``*fieldname_value``). All non-alphanumeric characters (spaces,
+        underscores, punctuation) are simply dropped, not replaced.
+        """
+        name = "" if name is None else str(name).strip().lower()
+        name = unicodedata.normalize("NFKD", name)
+        name = "".join(ch for ch in name if not unicodedata.combining(ch))
+        name = name.encode("ascii", "ignore").decode("ascii")
+        name = re.sub(r"[^a-z0-9]+", "", name)
+        return name or fallback
+
+
+    def clean_metadata_value_token(value, fallback="missing"):
+        """Cleans a metadata *value* for the IRaMuTeQ header.
+
+        Runs of non-alphanumeric characters become a single dash (``-``),
+        not an underscore, so the value never collides with the
+        name/value separator, e.g. "2023-02-24" instead of "2023_02_24".
+        """
         value = "" if value is None else str(value).strip().lower()
         value = unicodedata.normalize("NFKD", value)
         value = "".join(ch for ch in value if not unicodedata.combining(ch))
         value = value.encode("ascii", "ignore").decode("ascii")
-        value = re.sub(r"[^a-z0-9]+", "_", value)
-        value = re.sub(r"_+", "_", value).strip("_")
+        value = re.sub(r"[^a-z0-9]+", "-", value)
+        value = re.sub(r"-+", "-", value).strip("-")
         return value or fallback
 
 
@@ -129,13 +151,15 @@ def run_corpus_builder_app(forced_source_mode=None):
         used = {}
         prepared = []
         for column in columns:
-            base = clean_custom_metadata_token(column, fallback="metadata")
+            base = clean_metadata_field_name(column, fallback="metadata")
             count = used.get(base, 0) + 1
             used[base] = count
-            field = base if count == 1 else f"{base}_{count}"
+            field = base if count == 1 else f"{base}{count}"
             prepared.append((column, field))
         return prepared
 
+
+    _STRUCTURAL_CHARS_TO_STRIP = ["*", "«", "»", "£"]
 
     def clean_text(text, replace_asterisks=True):
         if text is None:
@@ -144,10 +168,13 @@ def run_corpus_builder_app(forced_source_mode=None):
         # Tabs are reserved for IRaMuTeQ metadata.
         text = text.replace("\t", " ")
         # Asterisks are structural in IRaMuTeQ and therefore cannot be left in
-        # CrowdTangle text. This is also the central cleaning rule in the supplied
-        # CrowdTangle scripts.
+        # the text (this is also the central cleaning rule in the supplied
+        # CrowdTangle scripts). The Greek guillemets «» and the £ sign are
+        # cleaned the same way, replaced with a space (not removed outright,
+        # so words on either side don't get glued together).
         if replace_asterisks:
-            text = text.replace("*", "_")
+            for ch in _STRUCTURAL_CHARS_TO_STRIP:
+                text = text.replace(ch, " ")
         text = text.replace("\r", "\n")
         text = re.sub(r"[ \t]+", " ", text)
         text = re.sub(r"\n+", " ", text)
@@ -340,14 +367,14 @@ def run_corpus_builder_app(forced_source_mode=None):
 
 
     def safe_metadata_field(name):
-        return clean_custom_metadata_token(name, fallback="metadata")
+        return clean_metadata_field_name(name, fallback="metadata")
 
 
     def build_header(metadata_pairs):
         """metadata_pairs is a list of (field_name, value)."""
         parts = ["****"]
         for field, value in metadata_pairs:
-            parts.append(f"*{safe_metadata_field(field)}_{clean_custom_metadata_token(value)}")
+            parts.append(f"*{safe_metadata_field(field)}_{clean_metadata_value_token(value)}")
         return " ".join(parts)
 
 
@@ -614,7 +641,7 @@ def run_corpus_builder_app(forced_source_mode=None):
             extra_cols = st.multiselect("Additional metadata columns (optional)", extra_options, key="ct_extra")
 
             st.markdown('<div class="section-title">3. CrowdTangle cleaning</div>', unsafe_allow_html=True)
-            st.markdown("The supplied CrowdTangle scripts are used as the cleaning reference: asterisks in text are replaced with underscores; page/group names are sanitized; dates can generate year and year-month; duplicate entries are removed.")
+            st.markdown("The supplied CrowdTangle scripts are used as the cleaning reference: structural characters (`*`, `«`, `»`, `£`) in text are replaced with a space; page/group names are sanitized; dates can generate year and year-month; duplicate entries are removed.")
             include_description = desc_col != "— none —"
             if include_description:
                 st.checkbox("Append the selected description to each post", value=True, key="ct_include_desc")
@@ -672,7 +699,7 @@ def run_corpus_builder_app(forced_source_mode=None):
                 return
 
             st.markdown('<div class="section-title">3. Text cleaning</div>', unsafe_allow_html=True)
-            clean_asterisks = st.checkbox("Replace `*` with `_` in text (recommended for IRaMuTeQ)", value=True)
+            clean_asterisks = st.checkbox("Replace structural characters `*`, `«`, `»`, `£` with a space (recommended for IRaMuTeQ)", value=True)
             generic_cleaner = lambda x: clean_text(x, replace_asterisks=clean_asterisks)
 
             csv_advanced_options, csv_min_length, csv_dedupe_text_only = render_advanced_cleaning_options("csv")
