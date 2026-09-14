@@ -237,25 +237,3 @@ start. Then check `docker logs iramuteq-toolkit` for errors.
 Accept the default and let it install WSL 2 if prompted — it's required
 and Docker Desktop handles the setup automatically.
 
-## Is this really the same on Windows, Mac, and Linux?
-
-Yes — Docker's whole point is that the app runs inside an identical
-Linux environment regardless of your computer. Docker Desktop on
-Windows and Mac transparently runs that Linux environment for you (via
-WSL 2 on Windows, via Apple's virtualization on Mac, including native
-support for Apple Silicon/M-series chips — no slow emulation needed).
-The base image and all the Python packages this app uses (Streamlit,
-requests, trafilatura, plotly, matplotlib) publish prebuilt versions
-for both Intel/AMD and Apple Silicon/ARM processors, so the build step
-doesn't need to compile anything from source on any of the three
-systems. There are no Windows- or Mac-specific file paths anywhere in
-the app or the Dockerfile, and the app doesn't require mounting any
-folder from your computer either — so there's nothing platform-specific
-left to go wrong.
-
-I reviewed the Dockerfile and every dependency for this — I was not
-able to actually run a build on a Windows or Mac machine myself, so
-this is a careful static check, not a live test. If anything goes
-wrong on your machine, the Troubleshooting section above covers the
-most likely causes; anything not covered there, paste the exact error
-and I'll help track it down.
