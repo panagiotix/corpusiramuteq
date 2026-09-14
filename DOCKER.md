@@ -1,19 +1,13 @@
 # Running the IRaMuTeQ Toolkit with Docker
 
 This guide is for people with no Docker experience. It walks through
-installing Docker and running the app on **Windows**, **Mac**, or **Linux**.
-Once it's running, you use it the same way on every system: open a web
-browser and go to **http://localhost:8501**.
+installing Docker, getting the project from GitHub, and running it on
+**Windows**, **Mac**, or **Linux**. Once it's running, you use it the same
+way on every system: open a web browser and go to
+**http://localhost:8501**.
 
-## Files you need
-
-Put these four files together in one folder (e.g. a folder called
-`iramuteq-toolkit` on your Desktop):
-
-- `Dockerfile`
-- `.dockerignore`
-- `app.py`
-- `requirements.txt`
+The project lives at:
+**https://github.com/panagiotix/corpusiramuteq**
 
 ---
 
@@ -33,7 +27,7 @@ You only need to do this once.
    **Docker Desktop must be open and running** every time you want to
    use the app — if it's closed, the commands below won't work.
 5. Open **PowerShell** (search for it in the Start menu) — this is
-   where you'll type the commands in Part 2.
+   where you'll type the commands in Part 2 and 3.
 
 ### Mac
 
@@ -52,7 +46,7 @@ You only need to do this once.
    **Docker must be open and running** every time you want to use the
    app.
 4. Open **Terminal** (search for it with Spotlight, Cmd+Space) — this
-   is where you'll type the commands in Part 2.
+   is where you'll type the commands in Part 2 and 3.
 
 ### Linux (Ubuntu/Debian example)
 
@@ -83,23 +77,63 @@ You should see a version number, e.g. `Docker version 27.x.x`.
 
 ---
 
-## Part 2 — Build and run the app
+## Part 2 — Get the project from GitHub
 
-Open a terminal (PowerShell on Windows, Terminal on Mac/Linux) and
-navigate into the folder with the four files. For example, if it's on
-your Desktop in a folder called `iramuteq-toolkit`:
+You have two options. If you're not sure, option A is simpler long-term
+(it makes future updates a one-line command), but option B needs
+nothing extra installed.
 
-**Windows (PowerShell):**
-```powershell
-cd $HOME\Desktop\iramuteq-toolkit
-```
+### Option A — with Git (recommended)
 
-**Mac / Linux:**
+If you don't have Git yet:
+- **Windows:** download it from <https://git-scm.com/download/win> and
+  install with the default options.
+- **Mac:** open Terminal and type `git --version` — if it's not
+  installed, macOS will offer to install it for you (via Xcode Command
+  Line Tools). Accept and wait for it to finish.
+- **Linux:** `sudo apt-get install -y git`
+
+Then, in your terminal (PowerShell on Windows, Terminal on Mac/Linux),
+go to wherever you want the project folder to live (e.g. your Desktop)
+and run:
+
 ```bash
-cd ~/Desktop/iramuteq-toolkit
+cd Desktop
+git clone https://github.com/panagiotix/corpusiramuteq.git
+cd corpusiramuteq
 ```
 
-### Build the image (do this once, and again any time the files change)
+You now have a `corpusiramuteq` folder with all the project files in it,
+and your terminal is already inside it — ready for Part 3.
+
+### Option B — without Git (download ZIP)
+
+1. Go to <https://github.com/panagiotix/corpusiramuteq>.
+2. Click the green **Code** button → **Download ZIP**.
+3. Find the downloaded ZIP (usually in your Downloads folder) and
+   extract/unzip it (right-click → *Extract All* on Windows,
+   double-click on Mac).
+4. Move the extracted `corpusiramuteq-main` folder wherever you like
+   (e.g. your Desktop).
+5. In your terminal, navigate into it, for example:
+
+   **Windows (PowerShell):**
+   ```powershell
+   cd $HOME\Desktop\corpusiramuteq-main
+   ```
+
+   **Mac / Linux:**
+   ```bash
+   cd ~/Desktop/corpusiramuteq-main
+   ```
+
+---
+
+## Part 3 — Build and run the app
+
+From inside the project folder (see Part 2):
+
+### Build the image (do this once, and again after any update)
 
 ```
 docker build -t iramuteq-toolkit .
@@ -131,7 +165,7 @@ Linux, because it's the same container underneath.
 
 ---
 
-## Part 3 — Everyday use
+## Part 4 — Everyday use
 
 ```
 # Stop the app
@@ -152,20 +186,23 @@ docker rm -f iramuteq-toolkit
 
 ---
 
-## Part 4 — Updating after the app is changed
+## Part 5 — Updating to a newer version
 
-If you get a new version of `app.py` (or any of the other three
-files):
+**If you used Option A (Git):**
 
-1. Replace the old file(s) in your folder with the new one(s).
-2. Run:
-
-```
+```bash
+cd corpusiramuteq
+git pull
 docker stop iramuteq-toolkit
 docker rm iramuteq-toolkit
 docker build -t iramuteq-toolkit .
 docker run -d --name iramuteq-toolkit -p 8501:8501 --restart unless-stopped iramuteq-toolkit
 ```
+
+**If you used Option B (ZIP):** download the ZIP again from
+<https://github.com/panagiotix/corpusiramuteq>, extract it over (or
+alongside) the old folder, then run the same `docker stop` /
+`docker rm` / `docker build` / `docker run` commands from inside it.
 
 ---
 
@@ -180,6 +217,10 @@ settle, then try again.
 Same cause as above — Docker Desktop needs to be open and fully started
 before you run any `docker` command.
 
+**"git: command not found" / "git is not recognized"**
+Git isn't installed — see Part 2, Option A for install links, or just
+use Option B (download ZIP) instead, which needs nothing extra.
+
 **"port is already allocated" / "address already in use"**
 Something else on your machine is already using port 8501 (maybe the
 app is already running). Check with `docker ps` — if `iramuteq-toolkit`
@@ -189,7 +230,7 @@ port, or run on a different port instead: replace `-p 8501:8501` with,
 e.g., `-p 8502:8501`, and then visit http://localhost:8502.
 
 **The browser shows "can't connect" / "refused to connect"**
-Give it a few seconds after `docker run` — Streamlit takes a moment to
+Give it a few seconds after `docker run` — the app takes a moment to
 start. Then check `docker logs iramuteq-toolkit` for errors.
 
 **Windows: Docker Desktop asks about WSL 2**
@@ -208,13 +249,13 @@ requests, trafilatura, plotly, matplotlib) publish prebuilt versions
 for both Intel/AMD and Apple Silicon/ARM processors, so the build step
 doesn't need to compile anything from source on any of the three
 systems. There are no Windows- or Mac-specific file paths anywhere in
-the app or the Dockerfile, and (as of the current version) the app
-doesn't require mounting any folder from your computer either — so
-there's nothing platform-specific left to go wrong.
+the app or the Dockerfile, and the app doesn't require mounting any
+folder from your computer either — so there's nothing platform-specific
+left to go wrong.
 
 I reviewed the Dockerfile and every dependency for this — I was not
 able to actually run a build on a Windows or Mac machine myself, so
 this is a careful static check, not a live test. If anything goes
 wrong on your machine, the Troubleshooting section above covers the
-most likely causes; anything not covered there, paste me the exact
-error and I'll help track it down.
+most likely causes; anything not covered there, paste the exact error
+and I'll help track it down.
