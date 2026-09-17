@@ -741,7 +741,6 @@ def run_corpus_builder_app(forced_source_mode=None):
             ),
         )
 
-        st.markdown('<div class="research-kicker">Open research utility · corpus preparation</div>', unsafe_allow_html=True)
         st.markdown(f'<h1 class="research-title">{_page_title}</h1>', unsafe_allow_html=True)
         st.markdown(
             f'<div class="research-subtitle">{_page_subtitle}</div>',
@@ -2149,8 +2148,6 @@ def run_mediacloud_app():
     # ------------------------------------------------------------
     # Header
     # ------------------------------------------------------------
-    st.markdown('<div class="research-kicker">Open research utility · corpus preparation</div>',
-                unsafe_allow_html=True)
     st.markdown('<h1 class="research-title">MediaCloud → IRaMuTeQ</h1>',
                 unsafe_allow_html=True)
     st.markdown(
