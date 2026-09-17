@@ -144,9 +144,25 @@ The first time takes a couple of minutes; it's faster afterwards.
 
 ### Run it
 
+Recommended — keeps "Extractions manager" (past corpora, logs, and
+statistics) on your computer even if the container is later removed and
+recreated:
+
+```bash
+mkdir -p ~/iramuteq-data
+docker run -d --name iramuteq-toolkit -p 8501:8501 \
+  -v ~/iramuteq-data:/app/data \
+  --restart unless-stopped iramuteq-toolkit
 ```
-docker run -d --name iramuteq-toolkit -p 8501:8501 --restart unless-stopped iramuteq-toolkit
-```
+
+Note: this saves those files as `root`, so deleting them by hand later
+(outside the app) needs `sudo rm`. The app itself now has Cancel and
+Delete buttons in "Extractions manager" that work regardless of file
+ownership, which is the recommended way to manage them day-to-day.
+
+Without the `-v` line at all, it still works — "Extractions manager" is
+just tied to the container instead of your computer, so it's gone if
+you later run `docker rm`.
 
 - `-d` runs it in the background, so you get your terminal back.
 - `--restart unless-stopped` makes it start automatically if Docker
@@ -196,8 +212,11 @@ git pull
 docker stop iramuteq-toolkit
 docker rm iramuteq-toolkit
 docker build -t iramuteq-toolkit .
-docker run -d --name iramuteq-toolkit -p 8501:8501 --restart unless-stopped iramuteq-toolkit
+docker run -d --name iramuteq-toolkit -p 8501:8501 \
+  -v ~/iramuteq-data:/app/data \
+  --restart unless-stopped iramuteq-toolkit
 ```
+(Drop the `-v` line if you didn't use it originally.)
 
 **If you used Option B (ZIP):** download the ZIP again from
 <https://github.com/panagiotix/corpusiramuteq>, extract it over (or
@@ -221,6 +240,12 @@ before you run any `docker` command.
 Git isn't installed — see Part 2, Option A for install links, or just
 use Option B (download ZIP) instead, which needs nothing extra.
 
+**"Permission non accordée" / "Permission denied" deleting files under `~/iramuteq-data` (Linux)**
+The container runs as `root`, so files it saves there are owned by
+`root`. Use the Cancel/Delete buttons in the app's "Extractions manager"
+page instead of deleting by hand — those work regardless of ownership.
+If you do need to delete by hand: `sudo rm -rf ~/iramuteq-data/runs/<folder>`.
+
 **"port is already allocated" / "address already in use"**
 Something else on your machine is already using port 8501 (maybe the
 app is already running). Check with `docker ps` — if `iramuteq-toolkit`
@@ -232,6 +257,19 @@ e.g., `-p 8502:8501`, and then visit http://localhost:8502.
 **The browser shows "can't connect" / "refused to connect"**
 Give it a few seconds after `docker run` — the app takes a moment to
 start. Then check `docker logs iramuteq-toolkit` for errors.
+
+**MediaCloud extraction keeps saying "Internet connection appears to be
+down" and retrying, even though the container can reach the internet**
+The app tells a genuine internet outage (worth waiting out) apart from a
+single article's host being unreachable (not worth waiting out, so it's
+skipped after one attempt by default) by opening a direct connection to
+`1.1.1.1` and `8.8.8.8` on port 53. On a restrictive network — a
+corporate proxy or firewall that only allows outbound HTTP/HTTPS and
+blocks other outbound ports — that specific check can fail even though
+article downloads (HTTPS) work fine, which makes the app think the whole
+connection is down. If that's your setup, allow outbound TCP to
+`1.1.1.1:53` and `8.8.8.8:53` (or any reachable host on port 53) from
+wherever the container runs.
 
 **Windows: Docker Desktop asks about WSL 2**
 Accept the default and let it install WSL 2 if prompted — it's required

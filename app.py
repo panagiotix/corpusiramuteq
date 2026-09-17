@@ -7,7 +7,7 @@ the sidebar. Each tool's internal mechanism is unchanged from its original
 standalone script:
 
 1. "IRaMuTeQ Corpus Builder" (originally app.py)
-   - CrowdTangle -> IRaMuTeQ (flexible column mapping + CrowdTangle-specific cleaning)
+   - Meta Content Library -> IRaMuTeQ (flexible column mapping + Meta Content Library-specific cleaning, for Facebook and Instagram CSV exports)
    - Any CSV -> IRaMuTeQ (one text column + at least one metadata column)
 
 2. "MediaCloud -> IRaMuTeQ" (originally app1.py, created by Panos Tsimpoukis
@@ -21,6 +21,12 @@ function names.
 """
 
 import threading
+import os
+import re
+import json
+import uuid
+import shutil
+from datetime import datetime
 
 import streamlit as st
 
@@ -31,9 +37,163 @@ import streamlit as st
 EXTRACTION_JOBS = {}
 EXTRACTION_JOBS_LOCK = threading.Lock()
 
+# ============================================================
+# Persistent extraction runs (survive tab closes, and — as long as
+# /app/data is mounted as a Docker volume — container restarts too).
+# Used by all three pipelines for the "Extractions manager" tab, and by
+# the MediaCloud pipeline for pause/resume.
+# ============================================================
+DATA_DIR = os.environ.get("IRAMUTEQ_DATA_DIR", "/app/data")
+RUNS_DIR = os.path.join(DATA_DIR, "runs")
+
+
+def _run_dir(run_id):
+    return os.path.join(RUNS_DIR, run_id)
+
+
+def _write_run_meta(run_id, meta):
+    try:
+        d = _run_dir(run_id)
+        os.makedirs(d, exist_ok=True)
+        meta = dict(meta)
+        meta["updated_at"] = datetime.now().isoformat()
+        tmp = os.path.join(d, "meta.json.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(meta, f)
+        os.replace(tmp, os.path.join(d, "meta.json"))
+    except Exception:
+        pass  # persistence is best-effort; it must never break extraction
+
+
+def create_run(pipeline, label, total=0, extra=None):
+    run_id = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
+    meta = {
+        "run_id": run_id, "pipeline": pipeline, "label": label,
+        "started_at": datetime.now().isoformat(),
+        "status": "running", "total": total, "processed": 0,
+        "successful": 0, "errors": 0, "duplicate_count": 0,
+        "national_count": 0, "regional_count": 0, "unclassified_count": 0,
+        "missing_metadata": 0, "request_errors": 0, "extraction_errors": 0,
+        "short_articles": 0, "unexpected_errors": 0, "invalid_date_rows": 0,
+        "current": "", "error_message": "", "connection_lost": False,
+        "eta_seconds": None,
+        "cancel_requested": False,
+    }
+    if extra:
+        meta.update(extra)
+    _write_run_meta(run_id, meta)
+    return run_id
+
+
+def read_run_meta(run_id):
+    path = os.path.join(_run_dir(run_id), "meta.json")
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def update_run(run_id, **fields):
+    meta = read_run_meta(run_id)
+    if meta is None:
+        return
+    meta.update(fields)
+    _write_run_meta(run_id, meta)
+
+
+def rename_run(run_id, new_label):
+    """Persist a user-facing name for an extraction."""
+    new_label = (new_label or "").strip()
+    if not new_label:
+        return False
+    meta = read_run_meta(run_id)
+    if meta is None:
+        return False
+    update_run(run_id, label=new_label)
+    return True
+
+
+def list_runs(pipeline=None):
+    try:
+        os.makedirs(RUNS_DIR, exist_ok=True)
+        runs = []
+        for name in os.listdir(RUNS_DIR):
+            meta = read_run_meta(name)
+            if meta and (pipeline is None or meta.get("pipeline") == pipeline):
+                runs.append(meta)
+        runs.sort(key=lambda m: m.get("started_at", ""), reverse=True)
+        return runs
+    except Exception:
+        return []
+
+
+def delete_run(run_id):
+    shutil.rmtree(_run_dir(run_id), ignore_errors=True)
+
+
+def write_run_file(run_id, name, data_bytes):
+    try:
+        d = _run_dir(run_id)
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, name), "wb") as f:
+            f.write(data_bytes)
+    except Exception:
+        pass
+
+
+def append_run_file(run_id, name, data_bytes):
+    try:
+        d = _run_dir(run_id)
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, name), "ab") as f:
+            f.write(data_bytes)
+    except Exception:
+        pass
+
+
+def read_run_file(run_id, name):
+    path = os.path.join(_run_dir(run_id), name)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "rb") as f:
+            return f.read()
+    except Exception:
+        return None
+
+
+def write_run_json(run_id, name, obj):
+    write_run_file(run_id, name, json.dumps(obj).encode("utf-8"))
+
+
+def read_run_json(run_id, name, default=None):
+    data = read_run_file(run_id, name)
+    if data is None:
+        return default
+    try:
+        return json.loads(data.decode("utf-8"))
+    except Exception:
+        return default
+
+
+def format_eta(seconds):
+    if seconds is None or seconds < 0 or seconds != seconds:  # NaN-safe
+        return ""
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, seconds = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m {seconds}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes}m"
+
 
 # ============================================================
-# TOOL 1: IRaMuTeQ Corpus Builder (CrowdTangle / Any CSV)
+# TOOL 1: IRaMuTeQ Corpus Builder (Meta Content Library / Any CSV)
 # — unchanged mechanism from the original app.py —
 # ============================================================
 def run_corpus_builder_app(forced_source_mode=None):
@@ -168,10 +328,11 @@ def run_corpus_builder_app(forced_source_mode=None):
         # Tabs are reserved for IRaMuTeQ metadata.
         text = text.replace("\t", " ")
         # Asterisks are structural in IRaMuTeQ and therefore cannot be left in
-        # the text (this is also the central cleaning rule in the supplied
-        # CrowdTangle scripts). The £ sign is cleaned the same way, replaced
-        # with a space. The Greek guillemets «» are kept (not stripped) —
-        # see space_out_guillemets(), applied once on the finished corpus.
+        # the text (this was also the central cleaning rule in the original
+        # CrowdTangle-era scripts this app is descended from). The £ sign is
+        # cleaned the same way, replaced with a space. The Greek guillemets
+        # «» are kept (not stripped) — see space_out_guillemets(), applied
+        # once on the finished corpus.
         if replace_asterisks:
             for ch in _STRUCTURAL_CHARS_TO_STRIP:
                 text = text.replace(ch, " ")
@@ -211,7 +372,7 @@ def run_corpus_builder_app(forced_source_mode=None):
         return text
 
 
-    def clean_crowdtangle_text(text):
+    def clean_meta_text(text):
         """Apply the cleaning rule demonstrated in the supplied scripts."""
         return clean_text(text)
 
@@ -306,7 +467,7 @@ def run_corpus_builder_app(forced_source_mode=None):
                 "Remove URLs",
                 value=True,
                 key=f"{key_prefix}_remove_urls",
-                help="Strips http(s):// links (including CrowdTangle's duplicated 'url1:=:url2' export artifact), which carry no lexical value.",
+                help="Strips http(s):// links, which carry no lexical value.",
             )
             strip_tags = st.checkbox(
                 "Strip # and @ symbols (keep the word)",
@@ -453,22 +614,22 @@ def run_corpus_builder_app(forced_source_mode=None):
         return replace_ellipses_with_space(space_out_guillemets(output.getvalue())).encode("utf-8"), log.getvalue().encode("utf-8"), stats
 
 
-    def build_crowdtangle_corpus(rows, text_col, group_col, date_col, desc_col, include_description, extra_cols, advanced_options=None, min_length=0, dedupe_on_text_only=False):
+    def build_meta_corpus(rows, text_col, group_col, date_col, desc_col, include_description, extra_cols, advanced_options=None, min_length=0, dedupe_on_text_only=False):
         output = io.StringIO()
         log = io.StringIO()
         saved = failed = duplicates = empty_text = filtered_short = 0
         seen = set()
         for row in rows:
             rawnb = row.get("_rawnb", "")
-            text = clean_crowdtangle_text(row.get(text_col, ""))
+            text = clean_meta_text(row.get(text_col, ""))
             if include_description and desc_col != "— none —":
-                desc = clean_crowdtangle_text(row.get(desc_col, ""))
+                desc = clean_meta_text(row.get(desc_col, ""))
                 if desc:
                     text = (text + "\n" + desc).strip() if text else desc
             text = apply_advanced_cleaning(text, advanced_options)
             if not text:
                 failed += 1; empty_text += 1
-                log.write(f"[ROW {rawnb}]\nerror: Empty CrowdTangle text\n{'-'*70}\n\n")
+                log.write(f"[ROW {rawnb}]\nerror: Empty text\n{'-'*70}\n\n")
                 continue
             if min_length and len(text) < min_length:
                 failed += 1; filtered_short += 1
@@ -493,7 +654,7 @@ def run_corpus_builder_app(forced_source_mode=None):
             if dedupe_key in seen:
                 duplicates += 1
                 what = "text (identical to an earlier row, ignoring metadata)" if dedupe_on_text_only else "record"
-                log.write(f"[ROW {rawnb}]\nerror: Duplicate CrowdTangle {what}\n{'-'*70}\n\n")
+                log.write(f"[ROW {rawnb}]\nerror: Duplicate {what}\n{'-'*70}\n\n")
                 continue
             seen.add(dedupe_key)
             output.write(record + "\n\n")
@@ -503,6 +664,15 @@ def run_corpus_builder_app(forced_source_mode=None):
 
 
     def show_local_result(label, corpus, log, stats, corpus_name, log_name):
+        pipeline = "crowdtangle" if label == "Meta Content Library" else "csv"
+        run_id = create_run(pipeline, label, total=stats.get("input", 0), extra={"status": "completed"})
+        write_run_file(run_id, "corpus.txt", corpus)
+        write_run_file(run_id, "failed.txt", log)
+        update_run(
+            run_id, status="completed", processed=stats.get("input", 0),
+            successful=stats.get("saved", 0), errors=stats.get("failed", 0),
+            duplicate_count=stats.get("duplicates", 0),
+        )
         st.session_state["last_local_result"] = {"label": label, "corpus": corpus, "log": log, "stats": stats, "corpus_name": corpus_name, "log_name": log_name}
         st.rerun()
 
@@ -554,9 +724,9 @@ def run_corpus_builder_app(forced_source_mode=None):
         """, unsafe_allow_html=True)
 
         _page_titles = {
-            "CrowdTangle": (
-                "CrowdTangle to IRaMuTeQ",
-                "Prepare a textual corpus for IRaMuTeQ from a CrowdTangle CSV export, with flexible column mapping and CrowdTangle-specific text cleaning.",
+            "Meta Content Library": (
+                "Meta Content Library to IRaMuTeQ",
+                "Prepare a textual corpus for IRaMuTeQ from a Meta Content Library CSV export (Facebook or Instagram), with flexible column mapping and Meta-specific text cleaning.",
             ),
             "Any CSV": (
                 "Any CSV to IRaMuTeQ",
@@ -567,7 +737,7 @@ def run_corpus_builder_app(forced_source_mode=None):
             forced_source_mode,
             (
                 "IRaMuTeQ Corpus Builder",
-                "Prepare textual corpora for IRaMuTeQ from CrowdTangle exports or from any CSV file, with explicit control over the text and metadata fields.",
+                "Prepare textual corpora for IRaMuTeQ from Meta Content Library exports or from any CSV file, with explicit control over the text and metadata fields.",
             ),
         )
 
@@ -588,7 +758,7 @@ def run_corpus_builder_app(forced_source_mode=None):
     This is the text of the second document.""", language=None)
         st.caption("The exact metadata variables depend on the source and the columns you select.")
 
-        if forced_source_mode in ("CrowdTangle", "Any CSV"):
+        if forced_source_mode in ("Meta Content Library", "Any CSV"):
             # The input source was already chosen on the toolkit's landing
             # page, so it is not asked again here.
             source_mode = forced_source_mode
@@ -596,16 +766,16 @@ def run_corpus_builder_app(forced_source_mode=None):
             st.markdown('<div class="section-title">Choose your input source</div>', unsafe_allow_html=True)
             source_mode = st.radio(
                 "Input source",
-                ["CrowdTangle", "Any CSV"],
+                ["Meta Content Library", "Any CSV"],
                 horizontal=True,
                 key="input_source_mode",
                 label_visibility="collapsed",
             )
 
         st.markdown('<div class="section-title">1. Corpus input</div>', unsafe_allow_html=True)
-        if source_mode == "CrowdTangle":
-            st.markdown("Upload a CrowdTangle CSV export. Column names may vary between exports; the application will suggest mappings that you can change.")
-            uploader_help = "CrowdTangle exports with comma, semicolon, tab, or pipe delimiters are supported."
+        if source_mode == "Meta Content Library":
+            st.markdown("Upload a Meta Content Library CSV export — Facebook or Instagram. Column names differ slightly between the two; the application will suggest mappings that you can change.")
+            uploader_help = "Meta Content Library exports (Facebook or Instagram) with comma, semicolon, tab, or pipe delimiters are supported."
         else:
             st.markdown("Upload any CSV. You will choose exactly one text column and at least one metadata column.")
             uploader_help = "CSV files with comma, semicolon, tab, or pipe delimiters are supported."
@@ -619,8 +789,20 @@ def run_corpus_builder_app(forced_source_mode=None):
 
         if uploaded is None:
             st.info("Upload a CSV to continue.")
-            st.markdown('<div class="footer-line">IRaMuTeQ Corpus Builder · CrowdTangle · generic CSV</div>', unsafe_allow_html=True)
+            st.markdown('<div class="footer-line">IRaMuTeQ Corpus Builder · Meta Content Library · generic CSV</div>', unsafe_allow_html=True)
             return
+
+        # A previous build's result is stored in session_state so it survives
+        # the rerun show_local_result() triggers. Without this check, that
+        # stored result keeps reappearing under "Research outputs" on every
+        # later rerun too — e.g. switching input source, or just changing a
+        # column selection here — making it look like a new corpus was built
+        # the instant you touched a widget, when actually nothing was built.
+        # Clear it whenever the file or the input source actually changes.
+        _upload_signature = (source_mode, uploaded.name, uploaded.size)
+        if st.session_state.get("_local_upload_signature") != _upload_signature:
+            st.session_state.pop("last_local_result", None)
+            st.session_state["_local_upload_signature"] = _upload_signature
 
         try:
             _, fieldnames, rows, detected_delimiter = read_uploaded_csv(uploaded)
@@ -634,9 +816,9 @@ def run_corpus_builder_app(forced_source_mode=None):
 
         st.caption(f"Detected delimiter: `{repr(detected_delimiter)}` · {len(fieldnames):,} columns · {len(rows):,} records")
 
-        if source_mode == "CrowdTangle":
-            st.markdown('<div class="section-title">2. Map CrowdTangle columns</div>', unsafe_allow_html=True)
-            st.markdown("CrowdTangle exports can change their headers. The application therefore suggests mappings, but **you control the final mapping**.")
+        if source_mode == "Meta Content Library":
+            st.markdown('<div class="section-title">2. Map Meta Content Library columns</div>', unsafe_allow_html=True)
+            st.markdown("Facebook and Instagram exports from Meta Content Library use slightly different headers. The application therefore suggests mappings, but **you control the final mapping**.")
 
             def suggest_column(candidates):
                 lowered = {c.lower().replace("_", " "): c for c in fieldnames}
@@ -649,10 +831,10 @@ def run_corpus_builder_app(forced_source_mode=None):
                         return c
                 return None
 
-            text_default = suggest_column(["message", "post message", "post text", "text", "post content"])
-            group_default = suggest_column(["page name", "group name", "page", "group", "account name"])
-            date_default = suggest_column(["post created date", "created date", "created time", "post date", "date", "time"])
-            desc_default = suggest_column(["page description", "description", "group description"])
+            text_default = suggest_column(["text", "message", "post message", "post text", "post content"])
+            group_default = suggest_column(["surface.name", "post owner.name", "page name", "group name", "page", "group", "account name"])
+            date_default = suggest_column(["creation time", "post created date", "created date", "created time", "post date", "date", "time"])
+            desc_default = suggest_column(["link attachment.description", "link attachment.caption", "page description", "description", "group description"])
 
             def select_with_optional(label, default, key):
                 options = ["— none —"] + fieldnames
@@ -660,18 +842,19 @@ def run_corpus_builder_app(forced_source_mode=None):
                 return st.selectbox(label, options, index=index, key=key)
 
             text_col = st.selectbox("Post text column *", fieldnames, index=fieldnames.index(text_default) if text_default in fieldnames else 0, key="ct_text")
-            group_col = select_with_optional("Page / group name (recommended)", group_default, "ct_group")
+            group_col = select_with_optional("Page / account name (recommended)", group_default, "ct_group")
             date_col = select_with_optional("Post date (recommended)", date_default, "ct_date")
-            desc_col = select_with_optional("Page / group description (optional)", desc_default, "ct_desc")
+            desc_col = select_with_optional("Link / page description (optional)", desc_default, "ct_desc")
 
             reserved = {text_col}
             for c in [group_col, date_col, desc_col]:
                 if c != "— none —": reserved.add(c)
             extra_options = [c for c in fieldnames if c not in reserved]
-            extra_cols = st.multiselect("Additional metadata columns (optional)", extra_options, key="ct_extra")
+            extra_cols = st.multiselect("Additional metadata columns (optional)", extra_options, key="ct_extra",
+                                         help="Meta Content Library also exports columns such as lang, content_type, hashtags, and reaction/engagement statistics (statistics.like_count, statistics.comment_count, etc.) — pick any of these to keep as metadata.")
 
-            st.markdown('<div class="section-title">3. CrowdTangle cleaning</div>', unsafe_allow_html=True)
-            st.markdown("The supplied CrowdTangle scripts are used as the cleaning reference: structural characters (`*`, `«`, `»`, `£`) in text are replaced with a space; page/group names are sanitized; dates can generate year and year-month; duplicate entries are removed.")
+            st.markdown('<div class="section-title">3. Meta Content Library cleaning</div>', unsafe_allow_html=True)
+            st.markdown("Structural characters (`*`, `«`, `»`, `£`) in text are replaced with a space; page/account names are sanitized; dates can generate year and year-month; duplicate entries are removed.")
             include_description = desc_col != "— none —"
             if include_description:
                 st.checkbox("Append the selected description to each post", value=True, key="ct_include_desc")
@@ -686,14 +869,14 @@ def run_corpus_builder_app(forced_source_mode=None):
             for c in extra_cols:
                 metadata_candidates.append((c, c))
             if not metadata_candidates:
-                st.error("CrowdTangle mode requires at least one metadata field. Select a page/group, date, or another metadata column.")
+                st.error("Meta Content Library mode requires at least one metadata field. Select a page/account, date, or another metadata column.")
                 return
 
             st.markdown('<div class="section-title">4. Preview</div>', unsafe_allow_html=True)
             p = rows[0]
-            text = clean_crowdtangle_text(p.get(text_col, ""))
+            text = clean_meta_text(p.get(text_col, ""))
             if st.session_state.get("ct_include_desc") and desc_col != "— none —":
-                desc = clean_crowdtangle_text(p.get(desc_col, ""))
+                desc = clean_meta_text(p.get(desc_col, ""))
                 if desc:
                     text = (text + "\n" + desc).strip()
             text = apply_advanced_cleaning(text, ct_advanced_options)
@@ -709,14 +892,14 @@ def run_corpus_builder_app(forced_source_mode=None):
             meta.append(("rawnb", p.get("_rawnb", "")))
             st.code(build_header(meta) + "\n" + text, language=None)
 
-            if st.button("Build CrowdTangle corpus", type="primary", use_container_width=True):
-                corpus, log, stats = build_crowdtangle_corpus(
+            if st.button("Build Meta Content Library corpus", type="primary", use_container_width=True):
+                corpus, log, stats = build_meta_corpus(
                     rows, text_col, group_col, date_col, desc_col,
                     bool(st.session_state.get("ct_include_desc")), extra_cols,
                     advanced_options=ct_advanced_options, min_length=ct_min_length,
                     dedupe_on_text_only=ct_dedupe_text_only,
                 )
-                show_local_result("CrowdTangle", corpus, log, stats, "crowdtangle_iramuteq.txt", "crowdtangle_processing_log.txt")
+                show_local_result("Meta Content Library", corpus, log, stats, "meta_content_library_iramuteq.txt", "meta_content_library_processing_log.txt")
 
         else:
             st.markdown('<div class="section-title">2. Map CSV columns</div>', unsafe_allow_html=True)
@@ -742,7 +925,7 @@ def run_corpus_builder_app(forced_source_mode=None):
             preview_meta.append(("rawnb", p.get("_rawnb", "")))
             st.code(build_header(preview_meta) + "\n" + preview_text, language=None)
 
-            if st.button("Build generic CSV corpus", type="primary", use_container_width=True):
+            if st.button("Build IRaMuTeQ corpus", type="primary", use_container_width=True):
                 corpus, log, stats = build_generic_corpus(
                     rows, text_col, metadata_cols, generic_cleaner,
                     advanced_options=csv_advanced_options, min_length=csv_min_length,
@@ -769,7 +952,7 @@ def run_corpus_builder_app(forced_source_mode=None):
             with st.expander("Processing diagnostics", expanded=False):
                 st.json(r)
 
-        st.markdown('<div class="footer-line">IRaMuTeQ Corpus Builder · CrowdTangle · generic CSV</div>', unsafe_allow_html=True)
+        st.markdown('<div class="footer-line">IRaMuTeQ Corpus Builder · Meta Content Library · generic CSV</div>', unsafe_allow_html=True)
 
 
     main()
@@ -787,12 +970,14 @@ def run_mediacloud_app():
     import unicodedata
     import threading
     import uuid
+    import socket
     from io import StringIO, BytesIO
 
 
-    from collections import defaultdict
+    from collections import defaultdict, deque
     from datetime import datetime
     from urllib.parse import urlsplit, urlunsplit
+    import statistics
 
     import requests
     import trafilatura
@@ -819,6 +1004,16 @@ def run_mediacloud_app():
     DELAY = 1.5
 
     MIN_ARTICLE_LENGTH = 100
+
+    # Governs only host/URL-specific connection failures (see
+    # internet_reachable() below) — a genuine internet outage always retries
+    # indefinitely regardless of this value, since it's worth waiting out.
+    # A single connection failure to one host (dead domain, DNS hiccup for
+    # that host, a block that only affects the server's IP, etc.), while the
+    # rest of the internet is reachable, is logged as failed and the run
+    # moves straight on to the next article. Raise this above 0 to give a
+    # flaky host a couple of extra tries before giving up on it.
+    MAX_CONNECTION_RETRIES = 0
 
 
     HEADERS = {
@@ -1057,7 +1252,8 @@ def run_mediacloud_app():
 
     def extract_year_month(value):
         """
-        Extract year and month from MediaCloud publish_date.
+        Extract year, month, and (when available) day from MediaCloud
+        publish_date.
 
         Supports common formats including:
 
@@ -1065,11 +1261,14 @@ def run_mediacloud_app():
             2026-06-23T12:30:00Z
             2026-06-23T12:30:00+00:00
             2026-06
+
+        Returns (year, month, day) — day is None when the source value
+        doesn't include a day (e.g. "2026-06").
         """
 
         if not value:
 
-            return None, None
+            return None, None, None
 
         value = value.strip()
 
@@ -1078,7 +1277,7 @@ def run_mediacloud_app():
         # --------------------------------------------------------
 
         match = re.search(
-            r"\b(20\d{2})-(\d{1,2})-(\d{1,2})\b",
+            r"\b(20\d{2})-(\d{1,2})-(\d{1,2})(?!\d)",
             value
         )
 
@@ -1088,7 +1287,7 @@ def run_mediacloud_app():
 
             month = match.group(2).zfill(2)
 
-            day = match.group(3)
+            day = match.group(3).zfill(2)
 
             try:
 
@@ -1098,7 +1297,7 @@ def run_mediacloud_app():
                     int(day)
                 )
 
-                return year, month
+                return year, month, day
 
             except ValueError:
 
@@ -1127,13 +1326,13 @@ def run_mediacloud_app():
                     1
                 )
 
-                return year, month
+                return year, month, None
 
             except ValueError:
 
                 pass
 
-        return None, None
+        return None, None, None
 
 
     # ============================================================
@@ -1153,7 +1352,7 @@ def run_mediacloud_app():
             None
         """
 
-        year, month = extract_year_month(
+        year, month, day = extract_year_month(
             value
         )
 
@@ -2097,6 +2296,53 @@ def run_mediacloud_app():
         )
 
     # ------------------------------------------------------------
+    # Reconnect to an active extraction before showing the fresh uploader.
+    # This is intentionally based on persistent run metadata, not only
+    # st.session_state, so changing input source cannot make a running job
+    # appear to have disappeared.
+    #
+    # While a run is active, only this banner is shown — the upload form
+    # below is hidden (it's not useful while one extraction is already in
+    # flight) and this fragment polls every couple of seconds. As soon as
+    # the run is no longer active, it triggers a full app rerun on its own,
+    # which lands back here with no active run and falls through to the
+    # normal upload form — no manual refresh needed.
+    # ------------------------------------------------------------
+    _active_mc_runs = [
+        m for m in list_runs(pipeline="mediacloud")
+        if m.get("status") in _ACTIVE_RUN_STATUSES
+    ]
+    _active_mc_run = _active_mc_runs[0] if _active_mc_runs else None
+
+    @st.fragment(run_every="2s")
+    def _active_run_banner():
+        live_runs = [
+            m for m in list_runs(pipeline="mediacloud")
+            if m.get("status") in _ACTIVE_RUN_STATUSES
+        ]
+        live_run = live_runs[0] if live_runs else None
+        if not live_run:
+            # Finished (or was cancelled) while the user was sitting on this
+            # page — do a full rerun so the rest of the page (the upload
+            # form) reappears, ready for a new extraction.
+            st.rerun(scope="app")
+            return
+        st.markdown("### 🔴 MediaCloud extraction still running")
+        _active_total = max(int(live_run.get("total") or 0), 1)
+        _active_done = min(int(live_run.get("processed") or 0), _active_total)
+        _active_current = live_run.get("current") or "Processing…"
+        st.progress(_active_done / _active_total, text=f"Processed {_active_done:,} / {_active_total:,} · {_active_current}")
+        st.info("Your extraction did not disappear. It is running in the background and its progress is stored persistently. Open **Extractions manager** to follow it or download the result when it finishes.")
+        if st.button("📂 Open Extractions manager", key="open_recent_from_active_mediacloud", use_container_width=True):
+            st.session_state["toolkit_input_source"] = "Extractions manager"
+            st.session_state["scroll_to_top_once"] = True
+            st.rerun(scope="app")
+
+    if _active_mc_run:
+        _active_run_banner()
+        return
+
+    # ------------------------------------------------------------
     # Upload
     # ------------------------------------------------------------
     st.markdown('<div class="section-title">1. Corpus input</div>', unsafe_allow_html=True)
@@ -2455,11 +2701,25 @@ def run_mediacloud_app():
         )
         st.markdown('</div>', unsafe_allow_html=True)
 
+    # Never leave the extraction button disabled because of a stale session id
+    # after a run has completed or been cancelled.
+    _session_active_id = st.session_state.get("active_extraction_job_id")
+    if _session_active_id:
+        _session_active_meta = read_run_meta(_session_active_id) or {}
+        if _session_active_meta.get("status") not in _ACTIVE_RUN_STATUSES:
+            st.session_state.pop("active_extraction_job_id", None)
+            _session_active_id = None
+
+    _persistent_mc_active = any(
+        m.get("status") in _ACTIVE_RUN_STATUSES
+        for m in list_runs(pipeline="mediacloud")
+    )
+
     run = st.button(
         "Begin corpus construction",
         type="primary",
         use_container_width=True,
-        disabled=bool(st.session_state.get("active_extraction_job_id")),
+        disabled=bool(_session_active_id or _persistent_mc_active),
     )
 
 
@@ -2528,6 +2788,33 @@ def run_mediacloud_app():
         return matrix_csv(initial_counts), matrix_csv(saved_counts), invalid_date_rows
 
 
+    def build_daily_totals_csv(selected_rows):
+        """One row per calendar date present in the initial (found) MediaCloud
+        rows, with the count summed across ALL media (not broken down by
+        media) — feeds the "Media coverage over time" line chart, which lets
+        the viewer roll this day-level data up to month or year themselves.
+
+        Rows whose publish_date has no day component (e.g. "2026-06") are
+        bucketed onto the 1st of that month — this only affects the day
+        view for those rows; month/year rollups are unaffected either way.
+        """
+        daily_counts = defaultdict(int)
+        for row in selected_rows:
+            media = (row.get("media_name", "") or "").strip()
+            if not media:
+                continue
+            year, month, day = extract_year_month((row.get("publish_date", "") or "").strip())
+            if not year:
+                continue
+            daily_counts[f"{year}-{month}-{day or '01'}"] += 1
+        output = StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["date", "total"])
+        for date in sorted(daily_counts):
+            writer.writerow([date, daily_counts[date]])
+        return output.getvalue().encode("utf-8-sig")
+
+
     def build_interactive_plot_data(initial_rows, saved_rows):
         """Return data keyed by media for the interactive year-by-year comparison."""
         initial_by_media = defaultdict(dict)
@@ -2579,14 +2866,307 @@ def run_mediacloud_app():
         plt.close(fig)
         return buffer.getvalue()
 
+    def build_coverage_bubble_spec(initial_rows, saved_rows, default_sort="volume"):
+        """Vega-Lite spec: one bubble per media x year.
+
+        Bubble size = articles initially found (how much was at stake);
+        bubble color = share actually saved (coverage ratio). This makes
+        under-represented media/years visible at a glance across the whole
+        corpus, unlike the single-media line plot above.
+
+        The "sort by" control is a native Vega-Lite param bound to a select
+        input (not a Streamlit widget), so it is baked into the spec itself
+        and keeps working when the chart is exported to a standalone .html
+        file and opened outside Streamlit.
+        """
+        saved_lookup = defaultdict(dict)
+        for row in saved_rows:
+            year = str(row.get("year", "")).strip()
+            if not year:
+                continue
+            for media, value in row.items():
+                if media == "year":
+                    continue
+                saved_lookup[year][media] = int(value or 0)
+
+        records = []
+        totals = defaultdict(lambda: {"initial": 0, "saved": 0})
+        for row in initial_rows:
+            year = str(row.get("year", "")).strip()
+            if not year:
+                continue
+            for media, value in row.items():
+                if media == "year":
+                    continue
+                initial = int(value or 0)
+                if initial <= 0:
+                    continue
+                saved = saved_lookup.get(year, {}).get(media, 0)
+                records.append({
+                    "year": int(year), "media": media, "initial": initial,
+                    "saved": saved, "missing": initial - saved,
+                    "ratio": round(saved / initial, 4),
+                })
+                totals[media]["initial"] += initial
+                totals[media]["saved"] += saved
+
+        # Pre-compute a numeric rank per media for every sort mode (0 = shown
+        # first/top). Vega-Lite can't reorder a categorical axis dynamically
+        # from a param on its own, so we bake all five orderings in as
+        # constant-per-media fields and let a calculate transform pick the
+        # active one based on the "sortMode" param.
+        def ranks_from_order(order):
+            return {m: i for i, m in enumerate(order)}
+
+        order_volume = sorted(totals, key=lambda m: totals[m]["initial"], reverse=True)
+        order_ratio = sorted(
+            totals, key=lambda m: (totals[m]["saved"] / totals[m]["initial"]) if totals[m]["initial"] else 1,
+        )
+        order_alpha = sorted(totals, key=str.lower)
+
+        national_rank = {"nationalpress": 0, "regionalpress": 1, "unclassified": 2}
+        regional_rank = {"regionalpress": 0, "nationalpress": 1, "unclassified": 2}
+        order_national = sorted(totals, key=lambda m: (national_rank[classify_source(m)], -totals[m]["initial"]))
+        order_regional = sorted(totals, key=lambda m: (regional_rank[classify_source(m)], -totals[m]["initial"]))
+
+        ranks = {
+            "volume": ranks_from_order(order_volume),
+            "ratio": ranks_from_order(order_ratio),
+            "national": ranks_from_order(order_national),
+            "regional": ranks_from_order(order_regional),
+            "alpha": ranks_from_order(order_alpha),
+        }
+        for rec in records:
+            for mode, rank_map in ranks.items():
+                rec[f"sort_{mode}"] = rank_map[rec["media"]]
+
+        row_step = 22
+        col_step = 90
+
+        return {
+            "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+            "data": {"values": records},
+            "width": {"step": col_step},
+            "height": {"step": row_step},
+            "background": "transparent",
+            "config": {
+                "axis": {"labelFontSize": 12, "titleFontSize": 13, "labelLimit": 200},
+                "legend": {"labelFontSize": 12, "titleFontSize": 13, "symbolSize": 140},
+                "view": {"continuousWidth": 300, "continuousHeight": 300},
+            },
+            "params": [
+                {
+                    "name": "search", "value": "",
+                    "bind": {"input": "text", "name": "Search media: "},
+                },
+                {
+                    "name": "sortMode", "value": default_sort,
+                    "bind": {
+                        "input": "select",
+                        "name": "Sort media by: ",
+                        "options": ["volume", "ratio", "national", "regional", "alpha"],
+                        "labels": [
+                            "Most articles found", "Worst coverage first",
+                            "National press first", "Regional press first", "Alphabetical",
+                        ],
+                    },
+                },
+            ],
+            "transform": [
+                {"calculate": "lower(datum.media)", "as": "media_lc"},
+                {"filter": "!search || indexof(datum.media_lc, lower(search)) >= 0"},
+                {"calculate": "datum['sort_' + sortMode]", "as": "sortKey"},
+            ],
+            "mark": {"type": "circle", "opacity": 0.9, "stroke": "white", "strokeWidth": 0.5},
+            "encoding": {
+                "x": {
+                    "field": "year", "type": "ordinal",
+                    "axis": {"orient": "top", "title": None, "labelAngle": 0, "labelFontSize": 13, "labelPadding": 8},
+                },
+                "y": {
+                    "field": "media", "type": "nominal",
+                    "sort": {"field": "sortKey", "op": "min"},
+                    "axis": {"title": None, "labelLimit": 200, "labelFontSize": 12},
+                },
+                "size": {
+                    "field": "initial", "type": "quantitative",
+                    "scale": {"type": "sqrt", "range": [10, 700]},
+                    "legend": {"title": "Articles found"},
+                },
+                "color": {
+                    "field": "ratio", "type": "quantitative",
+                    "scale": {"domain": [0, 1], "scheme": "redyellowgreen"},
+                    "legend": {"title": "Coverage", "format": ".0%"},
+                },
+                "tooltip": [
+                    {"field": "media", "title": "Media"},
+                    {"field": "year", "title": "Year"},
+                    {"field": "initial", "title": "Found"},
+                    {"field": "saved", "title": "Saved"},
+                    {"field": "missing", "title": "Missing"},
+                    {"field": "ratio", "title": "Coverage", "format": ".1%"},
+                ],
+            },
+        }
+
+    def build_media_coverage_line_spec(daily_rows, default_granularity="year"):
+        """Vega-Lite spec for the "Media coverage over time" line chart:
+        total articles initially found, summed across ALL media, with a
+        day/month/year granularity control.
+
+        daily_rows is the day-level {date, total} data from
+        build_daily_totals_csv — the day/month/year rollup happens inside
+        the spec itself (a native param, like search/sort on the bubble
+        chart above), not in Python, so a single dataset drives all three
+        views and the control keeps working in the exported standalone
+        HTML too, not just live in the app.
+
+        A fixed width (not "container" or a per-category step) means Month
+        (~dozens of categories) and especially Day (up to ~thousands) don't
+        all fit at once — labelOverlap thins overlapping labels out instead
+        of letting them collide, so the chart never needs horizontal
+        scrolling and stays easy to save/export as a static file. The line
+        and tooltips still carry full detail regardless. For real day-by-day
+        reading, "Focus month" (Day view only) filters down to a single
+        calendar month — at most 31 points, so every label fits with no
+        thinning at all. Its options are the actual months present in this
+        data, not a fixed list.
+        """
+        records = [{"date": r["date"], "total": int(r["total"] or 0)} for r in daily_rows if r.get("date")]
+
+        months = sorted({r["date"][:7] for r in records})
+        month_names = ["January", "February", "March", "April", "May", "June",
+                        "July", "August", "September", "October", "November", "December"]
+
+        def month_label(ym):
+            y, m = ym.split("-")
+            return f"{month_names[int(m) - 1]} {y}"
+
+        focus_month_options = ["All"] + months
+        focus_month_labels = ["All months (thinned overview)"] + [month_label(m) for m in months]
+
+        return {
+            "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+            "data": {"values": records},
+            "width": 1500,
+            "height": 380,
+            # "height" alone only sizes the plot's data area, not the margin
+            # needed for the rotated x-axis labels below it — that margin is
+            # normally auto-computed, but some hosts (e.g. Streamlit's chart
+            # component) clip at that computed boundary instead of expanding
+            # to fit it. This explicit bottom padding reserves the space
+            # directly, regardless of how the host handles auto-sizing.
+            "padding": {"left": 10, "right": 10, "top": 10, "bottom": 90},
+            "autosize": {"type": "pad", "contains": "padding"},
+            "background": "transparent",
+            "config": {"axis": {"labelFontSize": 11, "titleFontSize": 13}},
+            "params": [
+                {
+                    "name": "granularity", "value": default_granularity,
+                    "bind": {
+                        "input": "select", "name": "View by: ",
+                        "options": ["day", "month", "year"],
+                        "labels": ["Day", "Month", "Year"],
+                    },
+                },
+                {
+                    "name": "focusMonth", "value": "All",
+                    "bind": {
+                        "input": "select", "name": "Focus month (Day view only): ",
+                        "options": focus_month_options, "labels": focus_month_labels,
+                    },
+                },
+            ],
+            "transform": [
+                {"filter": "granularity != 'day' || focusMonth == 'All' || indexof(datum.date, focusMonth) == 0"},
+                {
+                    "calculate": (
+                        "granularity == 'year' ? timeFormat(toDate(datum.date), '%Y') : "
+                        "granularity == 'month' ? timeFormat(toDate(datum.date), '%Y-%m') : "
+                        "datum.date"
+                    ),
+                    "as": "period",
+                },
+                {"aggregate": [{"op": "sum", "field": "total", "as": "period_total"}], "groupby": ["period"]},
+            ],
+            "layer": [
+                {
+                    "mark": {
+                        "type": "area",
+                        "line": {"color": "#b3542e", "strokeWidth": 2.5},
+                        "color": {
+                            "x1": 1, "y1": 1, "x2": 1, "y2": 0, "gradient": "linear",
+                            "stops": [
+                                {"offset": 0, "color": "rgba(179,84,46,0.02)"},
+                                {"offset": 1, "color": "rgba(179,84,46,0.28)"},
+                            ],
+                        },
+                    },
+                    "encoding": {
+                        "x": {
+                            "field": "period", "type": "ordinal", "title": None,
+                            "axis": {"labelAngle": -45, "labelOverlap": "greedy", "labelFlush": True, "labelPadding": 6},
+                        },
+                        "y": {"field": "period_total", "type": "quantitative", "title": "Articles initially found (all media)"},
+                    },
+                },
+                {
+                    "mark": {"type": "point", "filled": True, "size": 45, "color": "#b3542e"},
+                    "encoding": {
+                        "x": {"field": "period", "type": "ordinal"},
+                        "y": {"field": "period_total", "type": "quantitative"},
+                        "tooltip": [
+                            {"field": "period", "title": "Period"},
+                            {"field": "period_total", "title": "Articles found"},
+                        ],
+                    },
+                },
+            ],
+        }
+
+    def coverage_charts_to_html(bubble_spec, line_spec, title="MediaCloud extraction — coverage charts"):
+        """Wrap both Vega-Lite specs into one self-contained HTML file
+        (vega-embed via CDN) so the user can save/share both charts together,
+        outside Streamlit."""
+        bubble_json = json.dumps(bubble_spec)
+        line_json = json.dumps(line_spec)
+        html = f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>{title}</title>
+<script src="https://cdn.jsdelivr.net/npm/vega@5"></script>
+<script src="https://cdn.jsdelivr.net/npm/vega-lite@5"></script>
+<script src="https://cdn.jsdelivr.net/npm/vega-embed@6"></script>
+<style>
+  body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+          margin: 24px 40px; color: #1e1c1a; background: #faf9f7; }}
+  h1 {{ font-size: 1.3rem; margin: 0 0 4px; }}
+  h2 {{ font-size: 1.05rem; margin: 2.5rem 0 4px; border-top: 1px solid #e6e2dc; padding-top: 1.5rem; }}
+  p {{ color: #6b6560; font-size: .95rem; max-width: 900px; line-height: 1.5; }}
+  #bubble {{ overflow-x: auto; }}
+  #line {{ max-width: 1500px; }}
+</style></head>
+<body>
+<h1>Extraction coverage by media &amp; year</h1>
+<p>Bubble size = articles found; color = share actually saved. Small, dark-red bubbles mark the
+media/years most under-represented in this extraction.</p>
+<div id="bubble"></div>
+
+<h2>Media coverage — total articles initially found, over time</h2>
+<p>All media summed together, per day/month/year — shows how MediaCloud's overall
+coverage volume evolved, before any saving/filtering. Use "View by" to switch granularity, and
+"Focus month" (Day view only) to zoom into a single month's day-by-day detail.</p>
+<div id="line"></div>
+
+<script>
+  vegaEmbed('#bubble', {bubble_json}, {{actions: {{export: true, source: false, compiled: false, editor: false}}}});
+  vegaEmbed('#line', {line_json}, {{actions: {{export: true, source: false, compiled: false, editor: false}}}});
+</script>
+</body></html>"""
+        return html.encode("utf-8")
+
     def extraction_worker(job_id, selected_rows, custom_metadata_fields, delay, min_article_length, use_press_classification):
         with EXTRACTION_JOBS_LOCK:
             job = EXTRACTION_JOBS[job_id]
             job["status"] = "running"
-
-        runtime_output = "news_iramuteq.txt"
-        runtime_failed = "failed_articles.txt"
-        runtime_stats = "publication_statistics_initial_vs_saved.csv"
 
         # Deduplicate URLs, preserving the original CSV row for every unique URL.
         unique_rows = []
@@ -2613,10 +3193,70 @@ def run_mediacloud_app():
         national_count = regional_count = unclassified_count = 0
         processed = 0
         cancelled = False
+        start_time = time.time()
+
+        # ETA is based on a rolling window of the last ETA_WINDOW completed
+        # articles (their median processing time * remaining count), not the
+        # whole run's average. This makes it react to a real change in pace
+        # (e.g. the site's gotten slower) within a few articles, while the
+        # median — rather than the mean — keeps a single unusually slow
+        # article (a retry, a big page) from swinging the estimate around.
+        ETA_WINDOW = 10
+        row_durations = deque(maxlen=ETA_WINDOW)
+
+        def compute_eta(processed_count):
+            remaining = total - processed_count
+            if remaining <= 0:
+                return 0
+            if row_durations:
+                per_article = statistics.median(row_durations)
+            elif processed_count > 0:
+                # Not enough of a rolling window yet (start of the run) —
+                # fall back to the whole-run average just for these first
+                # few articles.
+                per_article = (time.time() - start_time) / processed_count
+            else:
+                return None
+            return per_article * remaining
+
+        def cancellation_requested():
+            # Check both the in-memory Event and the persistent run record.
+            # This allows the Extractions manager to cancel a worker even when
+            # the user is viewing the run from a different Streamlit session.
+            try:
+                with EXTRACTION_JOBS_LOCK:
+                    live_job = EXTRACTION_JOBS.get(job_id)
+                    if live_job and live_job.get("cancel_event") is not None:
+                        if live_job["cancel_event"].is_set():
+                            return True
+            except Exception:
+                pass
+            meta = read_run_meta(job_id) or {}
+            return bool(meta.get("cancel_requested")) or meta.get("status") == "cancelling"
+
+        def internet_reachable(timeout=3):
+            """Cheap, DNS-independent check of whether *this machine* has any
+            internet connectivity at all, by opening a raw TCP connection to a
+            couple of well-known, extremely reliable IPs (Cloudflare's and
+            Google's public DNS resolvers). Used to tell apart a genuine
+            internet outage (worth waiting out) from a single host/URL being
+            unreachable while everything else is fine (not worth waiting out).
+            """
+            for host in ("1.1.1.1", "8.8.8.8"):
+                try:
+                    socket.create_connection((host, 53), timeout=timeout).close()
+                    return True
+                except OSError:
+                    continue
+            return False
 
         def update(**kwargs):
             with EXTRACTION_JOBS_LOCK:
                 job.update(kwargs)
+            # Mirror a lightweight snapshot to disk so the landing page's
+            # "Extractions manager" list and running-indicator can see live
+            # progress without needing this browser session at all.
+            update_run(job_id, **{k: v for k, v in kwargs.items() if k not in ("cancel_event",)})
 
         def write_failure_web(row_number, media_name, publish_date, url, reason):
             failed_buffer.write(f"[ROW {row_number}]\n")
@@ -2628,111 +3268,222 @@ def run_mediacloud_app():
 
         session = requests.Session()
         total = len(unique_rows)
+        update_run(job_id, total=total, cancel_requested=False)
 
         try:
             for number, row in enumerate(unique_rows, 1):
-                if job["cancel_event"].is_set():
+                if cancellation_requested():
                     cancelled = True
                     break
 
+                row_start_time = time.time()
                 raw_number = row.get("_rawnb")
                 media_name = (row.get("media_name", "") or "").strip()
                 publish_date = (row.get("publish_date", "") or "").strip()
                 raw_url = (row.get("url", "") or "").strip()
-                update(processed=number - 1, total=total, current=f"{media_name} · MediaCloud row {raw_number}")
+                eta_seconds = compute_eta(processed)
+                update(processed=number - 1, total=total, current=f"{media_name} · MediaCloud row {raw_number}",
+                       eta_seconds=eta_seconds, connection_lost=False)
 
                 if not media_name:
                     write_failure_web(raw_number, media_name, publish_date, raw_url, "Missing media_name")
                     errors += 1; missing_metadata += 1
+                    processed = number
+                    row_durations.append(time.time() - row_start_time)
+                    update(processed=processed, successful=successful, errors=errors, eta_seconds=compute_eta(processed))
                     continue
 
-                year, month = extract_year_month(publish_date)
+                year, month, day = extract_year_month(publish_date)
                 if not year:
                     write_failure_web(raw_number, media_name, publish_date, raw_url, "Could not parse publish_date")
                     errors += 1; missing_metadata += 1
+                    processed = number
+                    row_durations.append(time.time() - row_start_time)
+                    update(processed=processed, successful=successful, errors=errors, eta_seconds=compute_eta(processed))
                     continue
 
                 if not valid_url(raw_url):
                     write_failure_web(raw_number, media_name, publish_date, raw_url, "Invalid or missing URL")
                     errors += 1; missing_metadata += 1
+                    processed = number
+                    row_durations.append(time.time() - row_start_time)
+                    update(processed=processed, successful=successful, errors=errors, eta_seconds=compute_eta(processed))
                     continue
 
                 url = clean_url(raw_url)
-                try:
-                    response = session.get(url, headers=HEADERS, timeout=30)
-                    response.raise_for_status()
-                    article = trafilatura.extract(
-                        response.text, url=url, include_comments=False,
-                        include_tables=False, include_images=False,
-                        include_links=False, favor_precision=True, output_format="txt",
-                    )
 
-                    if not article:
-                        write_failure_web(raw_number, media_name, publish_date, raw_url, "Trafilatura returned no text")
-                        errors += 1; extraction_errors += 1
-                    else:
-                        article = clean_text(article)
-                        if len(article) < min_article_length:
-                            write_failure_web(raw_number, media_name, publish_date, raw_url,
-                                              f"Extracted article is too short ({len(article)} characters; minimum is {min_article_length})")
-                            errors += 1; short_articles += 1
+                # Retry loop: a broad connectivity failure (no response at all —
+                # DNS/connection/timeout) is treated as "connection lost". Two
+                # very different situations produce that same exception, and
+                # they need very different handling:
+                #   - a genuine internet outage on this machine → worth waiting
+                #     out indefinitely, since it always recovers eventually
+                #   - this one host/URL being unreachable while the rest of the
+                #     internet is fine (dead domain, a block on this server's
+                #     IP, DNS trouble for just that host) → not worth waiting
+                #     out; retry a bounded number of times (MAX_CONNECTION_RETRIES)
+                #     then log it as failed and move on, so one bad link can't
+                #     stall the whole run
+                # A response that DID come back (even an HTTP error) is not a
+                # connectivity issue and is handled as a normal per-article error.
+                outage_attempt = 0
+                host_attempt = 0
+                article_handled = False
+                while not article_handled:
+                    if cancellation_requested():
+                        cancelled = True
+                        break
+                    try:
+                        response = session.get(url, headers=HEADERS, timeout=30)
+                        response.raise_for_status()
+                        article = trafilatura.extract(
+                            response.text, url=url, include_comments=False,
+                            include_tables=False, include_images=False,
+                            include_links=False, favor_precision=True, output_format="txt",
+                        )
+
+                        if not article:
+                            write_failure_web(raw_number, media_name, publish_date, raw_url, "Trafilatura returned no text")
+                            errors += 1; extraction_errors += 1
                         else:
-                            source = clean_source_name(media_name)
-                            press_type = classify_source(media_name) if use_press_classification else None
-                            if press_type == "nationalpress": national_count += 1
-                            elif press_type == "regionalpress": regional_count += 1
-                            elif press_type == "unclassified": unclassified_count += 1
-
-                            custom_tokens = []
-                            for original_column, field_name in custom_metadata_fields:
-                                custom_tokens.append(f"*{field_name}_{clean_custom_metadata_token(row.get(original_column, ''))}")
-
-                            header_parts = ["****", f"*source_{source}", f"*year_{year}", f"*yearmonth_{year}-{month}"]
-                            if press_type is not None:
-                                header_parts.append(f"*type_{press_type}")
-                            header_parts.extend([f"*rawnb_{raw_number}", *custom_tokens])
-                            output_buffer.write(" ".join(header_parts) + "\n")
-                            output_buffer.write(article + "\n\n")
-                            successful += 1
-                            saved_counts[media_name][year] += 1
-
-                            if press_type == "unclassified" and use_press_classification:
+                            article = clean_text(article)
+                            if len(article) < min_article_length:
                                 write_failure_web(raw_number, media_name, publish_date, raw_url,
-                                                  "Source could not be classified as National Press or Regional Press")
+                                                  f"Extracted article is too short ({len(article)} characters; minimum is {min_article_length})")
+                                errors += 1; short_articles += 1
+                            else:
+                                source = clean_source_name(media_name)
+                                press_type = classify_source(media_name) if use_press_classification else None
+                                if press_type == "nationalpress": national_count += 1
+                                elif press_type == "regionalpress": regional_count += 1
+                                elif press_type == "unclassified": unclassified_count += 1
 
-                except requests.exceptions.RequestException as e:
-                    write_failure_web(raw_number, media_name, publish_date, raw_url, f"Request error: {type(e).__name__}: {e}")
-                    errors += 1; request_errors += 1
-                except Exception as e:
-                    write_failure_web(raw_number, media_name, publish_date, raw_url, f"Unexpected error: {type(e).__name__}: {e}")
-                    errors += 1; unexpected_errors += 1
+                                custom_tokens = []
+                                for original_column, field_name in custom_metadata_fields:
+                                    custom_tokens.append(f"*{field_name}_{clean_custom_metadata_token(row.get(original_column, ''))}")
+
+                                header_parts = ["****", f"*source_{source}", f"*year_{year}", f"*yearmonth_{year}-{month}"]
+                                if day:
+                                    header_parts.append(f"*date_{year}-{month}-{day}")
+                                if press_type is not None:
+                                    header_parts.append(f"*type_{press_type}")
+                                header_parts.extend([f"*rawnb_{raw_number}", *custom_tokens])
+                                output_buffer.write(" ".join(header_parts) + "\n")
+                                output_buffer.write(article + "\n\n")
+                                successful += 1
+                                saved_counts[media_name][year] += 1
+
+                                if press_type == "unclassified" and use_press_classification:
+                                    write_failure_web(raw_number, media_name, publish_date, raw_url,
+                                                      "Source could not be classified as National Press or Regional Press")
+                        article_handled = True
+
+                    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+                        # No response reached us at all. Check whether this
+                        # machine has internet connectivity at all right now —
+                        # that's the difference between "wait it out" and
+                        # "give up on this one link".
+                        if not internet_reachable():
+                            # Genuine internet outage: always worth waiting out,
+                            # since it will recover — retried indefinitely, no cap.
+                            outage_attempt += 1
+                            wait_s = min(60, 5 * (2 ** (outage_attempt - 1)))  # 5s, 10s, 20s, 40s, 60s, 60s...
+                            update(connection_lost=True,
+                                   current=f"Internet connection appears to be down — retrying in {wait_s}s (attempt {outage_attempt})…")
+                            waited = 0.0
+                            while waited < wait_s:
+                                if cancellation_requested():
+                                    cancelled = True
+                                    break
+                                time.sleep(0.5)
+                                waited += 0.5
+                            if cancelled:
+                                break
+                            update(connection_lost=False)
+                            continue  # retry the same row, no limit
+
+                        # Internet is reachable — this one host/URL is the
+                        # problem (dead domain, DNS trouble just for it, a
+                        # block on this server's IP, etc.), not your connection.
+                        # Retry a bounded number of times so a single bad link
+                        # can't stall the whole run.
+                        host_attempt += 1
+                        if host_attempt > MAX_CONNECTION_RETRIES:
+                            write_failure_web(
+                                raw_number, media_name, publish_date, raw_url,
+                                f"Connection error (no response received) after {host_attempt} attempt(s), "
+                                f"though internet connectivity looks fine — likely this host/URL specifically "
+                                f"is unreachable. Skipping this article and continuing. Last error: "
+                                f"{type(e).__name__}: {e}",
+                            )
+                            errors += 1; request_errors += 1
+                            update(connection_lost=False)
+                            article_handled = True
+                            continue
+                        wait_s = min(60, 5 * (2 ** (host_attempt - 1)))  # 5s, 10s, 20s, 40s, 60s, 60s...
+                        update(connection_lost=True,
+                               current=f"This article's request failed — retrying in {wait_s}s (attempt {host_attempt}/{MAX_CONNECTION_RETRIES})…")
+                        waited = 0.0
+                        while waited < wait_s:
+                            if cancellation_requested():
+                                cancelled = True
+                                break
+                            time.sleep(0.5)
+                            waited += 0.5
+                        if cancelled:
+                            break
+                        update(connection_lost=False)
+                        continue  # retry the same row
+
+                    except requests.exceptions.RequestException as e:
+                        write_failure_web(raw_number, media_name, publish_date, raw_url, f"Request error: {type(e).__name__}: {e}")
+                        errors += 1; request_errors += 1
+                        article_handled = True
+                    except Exception as e:
+                        write_failure_web(raw_number, media_name, publish_date, raw_url, f"Unexpected error: {type(e).__name__}: {e}")
+                        errors += 1; unexpected_errors += 1
+                        article_handled = True
+
+                if cancelled:
+                    break
 
                 processed = number
                 update(processed=processed, successful=successful, errors=errors,
                        national_count=national_count, regional_count=regional_count,
-                       unclassified_count=unclassified_count)
+                       unclassified_count=unclassified_count, eta_seconds=compute_eta(processed))
 
                 if number < total:
                     for _ in range(max(0, int(delay * 10))):
-                        if job["cancel_event"].is_set():
+                        if cancellation_requested():
                             cancelled = True
                             break
                         time.sleep(0.1)
                     if cancelled:
                         break
 
+                # Record this row's full wall-clock cost (network/extraction time
+                # plus the deliberate inter-request delay) so the *next* row's
+                # ETA reflects real, current pace — see ETA_WINDOW above.
+                row_durations.append(time.time() - row_start_time)
+
             corpus_text = replace_ellipses_with_space(space_out_guillemets(output_buffer.getvalue()))
             initial_stats_bytes, saved_stats_bytes, invalid_date_rows = build_statistics_tables(selected_rows, corpus_text)
             initial_stats_rows = list(csv.DictReader(StringIO(initial_stats_bytes.decode("utf-8-sig"))))
             saved_stats_rows = list(csv.DictReader(StringIO(saved_stats_bytes.decode("utf-8-sig"))))
             plot_bytes = build_statistics_plot_png(initial_stats_rows, saved_stats_rows)
+            daily_totals_bytes = build_daily_totals_csv(selected_rows)
+            daily_totals_rows = list(csv.DictReader(StringIO(daily_totals_bytes.decode("utf-8-sig"))))
+            coverage_spec = build_coverage_bubble_spec(initial_stats_rows, saved_stats_rows, default_sort="volume")
+            line_spec = build_media_coverage_line_spec(daily_totals_rows, default_granularity="year")
+            coverage_html_bytes = coverage_charts_to_html(coverage_spec, line_spec)
 
             corpus_bytes = corpus_text.encode("utf-8")
             failed_bytes = failed_buffer.getvalue().encode("utf-8")
             result = {
                 "corpus": corpus_bytes, "failed": failed_bytes,
                 "initial_stats": initial_stats_bytes, "saved_stats": saved_stats_bytes,
-                "plot": plot_bytes, "successful": successful, "errors": errors,
+                "daily_totals": daily_totals_bytes,
+                "plot": plot_bytes, "coverage_html": coverage_html_bytes, "successful": successful, "errors": errors,
                 "duplicate_count": duplicate_count, "national_count": national_count,
                 "regional_count": regional_count, "unclassified_count": unclassified_count,
                 "rows_processed": processed, "missing_metadata": missing_metadata,
@@ -2742,14 +3493,30 @@ def run_mediacloud_app():
                 "cancelled": cancelled,
             }
             update(status="cancelled" if cancelled else "completed", result=result, processed=processed)
+            write_run_file(job_id, "corpus.txt", corpus_bytes)
+            write_run_file(job_id, "failed.txt", failed_bytes)
+            write_run_file(job_id, "initial_stats.csv", initial_stats_bytes)
+            write_run_file(job_id, "saved_stats.csv", saved_stats_bytes)
+            write_run_file(job_id, "daily_totals.csv", daily_totals_bytes)
+            write_run_file(job_id, "coverage_chart.html", coverage_html_bytes)
+            update_run(
+                job_id, status="cancelled" if cancelled else "completed", processed=processed,
+                successful=successful, errors=errors, duplicate_count=duplicate_count,
+                national_count=national_count, regional_count=regional_count,
+                unclassified_count=unclassified_count, connection_lost=False,
+            )
         except Exception as e:
             update(status="error", error=f"{type(e).__name__}: {e}")
+            update_run(job_id, status="error", error_message=f"{type(e).__name__}: {e}")
         finally:
             session.close()
 
 
     if run:
-        job_id = uuid.uuid4().hex
+        job_id = create_run(
+            "mediacloud", uploaded.name if uploaded is not None else "MediaCloud extraction",
+            total=len(selected_rows),
+        )
         with EXTRACTION_JOBS_LOCK:
             EXTRACTION_JOBS[job_id] = {
                 "status": "starting", "processed": 0, "total": 0,
@@ -2757,102 +3524,98 @@ def run_mediacloud_app():
                 "cancel_event": threading.Event(),
             }
         st.session_state["active_extraction_job_id"] = job_id
+        st.session_state.pop("mc_confirm_cancel", None)
         worker = threading.Thread(
             target=extraction_worker,
             args=(job_id, selected_rows, custom_metadata_fields, delay, min_article_length, use_press_classification),
             daemon=True,
         )
         worker.start()
+        # Extraction progress and cancellation now live entirely in
+        # "Manage extractions" — send the user straight there.
+        st.session_state["toolkit_input_source"] = "Extractions manager"
+        st.session_state["scroll_to_top_once"] = True
+        st.rerun()
 
 
     @st.fragment(run_every="1s")
     def extraction_monitor():
-        job_id = st.session_state.get("active_extraction_job_id") or st.session_state.get("last_extraction_job_id")
+        job_id = st.session_state.get("active_extraction_job_id")
         if not job_id:
             return
+
         with EXTRACTION_JOBS_LOCK:
-            job = EXTRACTION_JOBS.get(job_id)
-        if not job:
+            job = dict(EXTRACTION_JOBS.get(job_id, {}))
+        meta = read_run_meta(job_id) or {}
+        if not job and not meta:
             st.session_state.pop("active_extraction_job_id", None)
             return
 
-        st.markdown("### Extraction progress")
-        if job["status"] in {"starting", "running"}:
-            total = max(job.get("total", 0), 1)
-            done = min(job.get("processed", 0), total)
-            st.progress(done / total, text=f"Processed {done:,} / {total:,} · {job.get('current', '')}")
+        status = job.get("status") or meta.get("status", "unknown")
+        total = max(int(job.get("total") or meta.get("total") or 0), 1)
+        done = min(int(job.get("processed") or meta.get("processed") or 0), total)
+        current = job.get("current") or meta.get("current") or ""
+
+        if status in {"starting", "running"}:
+            st.markdown("### Extraction progress")
+            st.info("You can safely close this tab or switch to another page — the extraction keeps running in the background. The progress is stored persistently.")
+            eta_seconds = job.get("eta_seconds")
+            if eta_seconds is None:
+                eta_seconds = meta.get("eta_seconds")
+            eta_text = f" · ~{format_eta(eta_seconds)} remaining" if eta_seconds is not None else " · estimating remaining time…"
+            if job.get("connection_lost") or meta.get("connection_lost"):
+                st.warning(f"⚠ {current or 'Connection lost — retrying…'}")
+            st.progress(done / total, text=f"Processed {done:,} / {total:,}{eta_text} · {current}")
+
             c1, c2 = st.columns([1, 3])
             with c1:
-                if st.button("Cancel extraction", type="secondary", use_container_width=True, key=f"cancel_{job_id}"):
-                    job["cancel_event"].set()
-                    job["status"] = "cancelling"
+                if not st.session_state.get("mc_confirm_cancel"):
+                    if st.button("⏹ Cancel extraction", type="primary", use_container_width=True, key=f"cancel_{job_id}"):
+                        st.session_state["mc_confirm_cancel"] = True
+                        st.rerun(scope="fragment")
+                else:
+                    st.warning("Cancel this extraction? Progress made so far will still be saved and downloadable, but the rest of the CSV won't be processed.")
+                    cc1, cc2 = st.columns(2)
+                    with cc1:
+                        if st.button("Yes, cancel", type="primary", use_container_width=True, key=f"cancel_confirm_{job_id}"):
+                            with EXTRACTION_JOBS_LOCK:
+                                live_job = EXTRACTION_JOBS.get(job_id)
+                                if live_job and live_job.get("cancel_event") is not None:
+                                    live_job["cancel_event"].set()
+                                    live_job["status"] = "cancelling"
+                            update_run(job_id, status="cancelling", cancel_requested=True)
+                            st.session_state.pop("mc_confirm_cancel", None)
+                            st.rerun(scope="fragment")
+                    with cc2:
+                        if st.button("No, keep going", use_container_width=True, key=f"cancel_back_{job_id}"):
+                            st.session_state.pop("mc_confirm_cancel", None)
+                            st.rerun(scope="fragment")
             with c2:
-                st.caption("Cancellation stops the workflow after the current web request finishes. You can then change the parameters and start again without refreshing the page.")
+                st.caption("Cancellation stops the workflow after the current web request finishes.")
             return
 
-        if job["status"] == "cancelling":
+        if status == "cancelling":
+            st.markdown("### Extraction progress")
             st.info("Cancelling extraction… the current request will finish, then processing will stop.")
+            st.progress(done / total, text=f"Processed {done:,} / {total:,} · Cancelling…")
             return
 
-        if job["status"] == "error":
-            st.error(f"Extraction failed: {job.get('error', 'Unknown error')}")
+        if status == "error":
+            st.error(f"Extraction failed: {job.get('error') or meta.get('error_message') or 'Unknown error'}")
             st.session_state.pop("active_extraction_job_id", None)
+            st.session_state.pop("mc_confirm_cancel", None)
+            st.rerun(scope="app")
             return
 
-        out = job["result"]
-        st.progress(1.0, text="Extraction stopped." if out["cancelled"] else "Corpus construction complete.")
-        if out["cancelled"]:
-            st.warning(f"Extraction cancelled after {out['rows_processed']:,} processed records. The partial corpus and statistics below are available for inspection/download.")
-        else:
-            st.success("Corpus construction completed.")
-
-        result_cols = st.columns(5)
-        result_cols[0].metric("Articles saved", f"{out['successful']:,}")
-        result_cols[1].metric("Articles failed", f"{out['errors']:,}")
-        result_cols[2].metric("Duplicate URLs", f"{out['duplicate_count']:,}")
-        result_cols[3].metric("National press", f"{out['national_count']:,}")
-        result_cols[4].metric("Regional press", f"{out['regional_count']:,}")
-
-        st.markdown("### Publication statistics")
-        st.caption("Initial = records in the selected CSV. Saved = articles actually present in the generated .txt corpus, reconstructed from each IRaMuTeQ header and its original rawnb row number. Both tables use the same year × media format.")
-        table_cols_1 = st.columns([4, 1])
-        with table_cols_1[0]:
-            st.markdown("#### Initial articles in the selected CSV")
-        with table_cols_1[1]:
-            st.download_button("⬇ CSV", data=out["initial_stats"], file_name="publication_counts_initial.csv", mime="text/csv", use_container_width=True, key=f"initial_table_csv_{job_id}", help="Download this table as CSV")
-        st.dataframe(list(csv.DictReader(StringIO(out["initial_stats"].decode("utf-8-sig")))), use_container_width=True, hide_index=True)
-
-        table_cols_2 = st.columns([4, 1])
-        with table_cols_2[0]:
-            st.markdown("#### Articles successfully saved")
-        with table_cols_2[1]:
-            st.download_button("⬇ CSV", data=out["saved_stats"], file_name="publication_counts_saved.csv", mime="text/csv", use_container_width=True, key=f"saved_table_csv_{job_id}", help="Download this table as CSV")
-        st.dataframe(list(csv.DictReader(StringIO(out["saved_stats"].decode("utf-8-sig")))), use_container_width=True, hide_index=True)
-
-        initial_rows_for_plot = list(csv.DictReader(StringIO(out["initial_stats"].decode("utf-8-sig"))))
-        saved_rows_for_plot = list(csv.DictReader(StringIO(out["saved_stats"].decode("utf-8-sig"))))
-        initial_by_media, saved_by_media = build_interactive_plot_data(initial_rows_for_plot, saved_rows_for_plot)
-        media_options = sorted(initial_by_media.keys(), key=str.lower)
-        if media_options:
-            selected_plot_media = st.selectbox("Choose a media source for the comparison", media_options, key=f"plot_media_monitor_{job_id}")
-            years = sorted(set(initial_by_media.get(selected_plot_media, {})) | set(saved_by_media.get(selected_plot_media, {})), key=int)
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=years, y=[initial_by_media[selected_plot_media].get(y, 0) for y in years], mode="lines+markers", name="Initial articles"))
-            fig.add_trace(go.Scatter(x=years, y=[saved_by_media[selected_plot_media].get(y, 0) for y in years], mode="lines+markers", name="Articles saved"))
-            fig.update_layout(title=f"Initial vs. saved articles — {selected_plot_media}", xaxis_title="Year", yaxis_title="Number of articles", hovermode="x unified")
-            st.plotly_chart(fig, use_container_width=True, key=f"plot_monitor_{job_id}")
-
-        d1, d2 = st.columns(2)
-        with d1:
-            st.download_button("Download IRaMuTeQ corpus", data=out["corpus"], file_name="news_iramuteq.txt", mime="text/plain", use_container_width=True, key=f"corpus_{job_id}")
-        with d2:
-            st.download_button("Download failure log", data=out["failed"], file_name="failed_articles.txt", mime="text/plain", use_container_width=True, key=f"failed_{job_id}")
-
-        # Keep results available after any subsequent full-page rerun/download.
-
-        st.session_state["research_outputs"] = out
+        # Finished: save the result in session state and force one full rerun.
+        # This immediately unlocks the MediaCloud form for a new extraction.
+        out = job.get("result")
+        if out is not None:
+            st.session_state["research_outputs"] = out
         st.session_state["last_extraction_job_id"] = job_id
         st.session_state.pop("active_extraction_job_id", None)
+        st.session_state.pop("mc_confirm_cancel", None)
+        st.rerun(scope="app")
 
     extraction_monitor()
 
@@ -2894,6 +3657,27 @@ def run_mediacloud_app():
 
         initial_rows_for_plot = list(csv.DictReader(StringIO(out["initial_stats"].decode("utf-8-sig"))))
         saved_rows_for_plot = list(csv.DictReader(StringIO(out["saved_stats"].decode("utf-8-sig"))))
+
+        st.markdown("#### Coverage overview — which media/years are under-represented")
+        coverage_spec_live = build_coverage_bubble_spec(initial_rows_for_plot, saved_rows_for_plot)
+        st.caption("Bubble size = articles found · bubble color = share actually saved. Use the built-in search box and \"Sort media by\" dropdown above the chart to explore. Small, dark-red bubbles are what to check first.")
+        # use_container_width=False: the spec uses fixed step sizing (a set
+        # pixel width per year column) so labels never get squeezed by
+        # legends/media names — Streamlit scrolls horizontally if it doesn't fit.
+        st.vega_lite_chart(coverage_spec_live, use_container_width=False)
+
+        st.markdown("#### Media coverage — total articles initially found, over time")
+        daily_rows_for_plot = list(csv.DictReader(StringIO(out["daily_totals"].decode("utf-8-sig")))) if out.get("daily_totals") else []
+        line_spec_live = build_media_coverage_line_spec(daily_rows_for_plot)
+        st.caption("All media summed together, per day/month/year — shows how overall coverage volume evolved, before any saving/filtering. Use \"View by\" above the chart to switch granularity, and \"Focus month\" (Day view only) to zoom into a single month's day-by-day detail.")
+        st.vega_lite_chart(line_spec_live, use_container_width=False)
+
+        st.download_button(
+            "⬇ Coverage graphs (.html)", data=coverage_charts_to_html(coverage_spec_live, line_spec_live),
+            file_name="coverage_chart.html", mime="text/html", key="coverage_html_download_persistent",
+            help="A self-contained interactive HTML file with both charts and the same search/sort/view controls — open it in any browser, no Streamlit needed.",
+        )
+
         initial_by_media, saved_by_media = build_interactive_plot_data(initial_rows_for_plot, saved_rows_for_plot)
         media_options = sorted(initial_by_media.keys(), key=str.lower)
         if media_options:
@@ -2952,9 +3736,9 @@ def run_mediacloud_app():
 # chosen once, before proceeding into the matching pipeline.
 # ============================================================
 INPUT_SOURCES = {
-    "CrowdTangle": {
-        "label": "CrowdTangle",
-        "description": "Upload a CrowdTangle CSV export. Flexible column mapping, CrowdTangle-specific text cleaning.",
+    "Meta Content Library": {
+        "label": "Meta Content Library",
+        "description": "Upload a Meta Content Library CSV export — Facebook or Instagram. Flexible column mapping, Meta-specific text cleaning.",
     },
     "Any CSV": {
         "label": "Any CSV",
@@ -2966,6 +3750,216 @@ INPUT_SOURCES = {
     },
 }
 
+_PIPELINE_LABELS = {"crowdtangle": "Meta Content Library", "csv": "Any CSV", "mediacloud": "MediaCloud"}
+_ACTIVE_RUN_STATUSES = {"starting", "running", "cancelling"}
+
+
+def render_recent_extractions():
+    # Right after launching a new extraction, the user is redirected here —
+    # but Streamlit keeps the browser's previous scroll offset across
+    # reruns, so without this they'd land wherever they happened to be
+    # scrolled to on the *previous* page (often the bottom, near the
+    # "Launch extraction" button) instead of the top of this one.
+    _scroll_to_top_pending = st.session_state.pop("scroll_to_top_once", False)
+    st.markdown('<h2 style="font-family:Georgia,\'Times New Roman\',serif;">Extractions manager</h2>', unsafe_allow_html=True)
+    st.caption("Every corpus you've built (Meta Content Library, Any CSV, or MediaCloud) is kept here — even after closing the tab — until you delete it.")
+
+    @st.fragment(run_every="1s")
+    def _recent_content():
+        with EXTRACTION_JOBS_LOCK:
+            _active_job_ids = [jid for jid, j in EXTRACTION_JOBS.items() if j.get("status") in _ACTIVE_RUN_STATUSES]
+        _active_persistent_runs = [m for m in list_runs(pipeline="mediacloud") if m.get("status") in _ACTIVE_RUN_STATUSES]
+        _live_run_id = _active_persistent_runs[0].get("run_id") if _active_persistent_runs else (_active_job_ids[0] if _active_job_ids else None)
+
+        if _live_run_id:
+            with EXTRACTION_JOBS_LOCK:
+                job = dict(EXTRACTION_JOBS.get(_live_run_id, {}))
+            meta_live = read_run_meta(_live_run_id) or {}
+            status = job.get("status") or meta_live.get("status", "unknown")
+            total = max(int(job.get("total") or meta_live.get("total") or 0), 1)
+            done = min(int(job.get("processed") or meta_live.get("processed") or 0), total)
+            current = job.get("current") or meta_live.get("current") or ""
+
+            st.markdown("### 🔴 Extraction in progress")
+            eta_seconds = job.get("eta_seconds")
+            if eta_seconds is None:
+                eta_seconds = meta_live.get("eta_seconds")
+            eta_text = f" · ~{format_eta(eta_seconds)} remaining" if eta_seconds is not None else " · estimating remaining time…"
+            st.progress(done / total, text=f"Processed {done:,} / {total:,}{eta_text} · {current}")
+            st.caption("You can close this tab, or even quit your browser entirely, and come back later — the extraction keeps running in the background. Just don't stop or quit the Docker container (or Docker Desktop), since that's what's actually doing the work.")
+
+            if status == "cancelling":
+                st.info("Cancelling… the current request will finish, then processing will stop.")
+            else:
+                # Always show Cancel for an active MediaCloud run. The request is
+                # persisted, so the background worker can observe it even when the
+                # current browser session cannot access its in-memory Event.
+                confirm_key = f"mc_recent_confirm_cancel_{_live_run_id}"
+                if not st.session_state.get(confirm_key):
+                    if st.button("⏹ Cancel extraction", type="primary", use_container_width=False, key=f"recent_cancel_{_live_run_id}"):
+                        st.session_state[confirm_key] = True
+                        st.rerun(scope="fragment")
+                else:
+                    st.warning("Cancel this extraction? Progress made so far will still be saved and downloadable, but the rest of the CSV won't be processed.")
+                    rc1, rc2 = st.columns(2)
+                    with rc1:
+                        if st.button("Yes, cancel", type="primary", use_container_width=True, key=f"recent_cancel_confirm_{_live_run_id}"):
+                            with EXTRACTION_JOBS_LOCK:
+                                live_job = EXTRACTION_JOBS.get(_live_run_id)
+                                if live_job and live_job.get("cancel_event") is not None:
+                                    live_job["cancel_event"].set()
+                                    live_job["status"] = "cancelling"
+                            update_run(_live_run_id, status="cancelling", cancel_requested=True)
+                            st.session_state.pop(confirm_key, None)
+                            st.rerun(scope="fragment")
+                    with rc2:
+                        if st.button("No, keep going", use_container_width=True, key=f"recent_cancel_back_{_live_run_id}"):
+                            st.session_state.pop(confirm_key, None)
+                            st.rerun(scope="fragment")
+            st.markdown("---")
+
+        runs = list_runs()
+        if not runs:
+            st.info("No extractions yet. Build a corpus from any of the three input sources and it will show up here.")
+            return
+
+        for meta in runs:
+            run_id = meta.get("run_id", "")
+            pipeline = _PIPELINE_LABELS.get(meta.get("pipeline"), meta.get("pipeline", "?"))
+            status = meta.get("status", "unknown")
+            started_at = meta.get("started_at", "")[:19].replace("T", " ")
+            label = meta.get("label", "")
+            status_badge = {
+                "completed": "✅ Completed", "cancelled": "⏹ Cancelled", "error": "❌ Error",
+                "starting": "🔴 Running", "running": "🔴 Running", "cancelling": "🟠 Cancelling…",
+            }.get(status, status)
+
+            with st.container(border=True):
+                top = st.columns([3, 1])
+                with top[0]:
+                    name_key = f"rename_extraction_{run_id}"
+                    edit_key = f"editing_extraction_name_{run_id}"
+                    if st.session_state.get(edit_key):
+                        edit_cols = st.columns([6, 1])
+                        with edit_cols[0]:
+                            edited_label = st.text_input(
+                                "Extraction name",
+                                value=label,
+                                key=name_key,
+                                label_visibility="collapsed",
+                            )
+                        with edit_cols[1]:
+                            if st.button("✓", key=f"save_name_{run_id}", help="Save name"):
+                                if rename_run(run_id, edited_label):
+                                    st.session_state.pop(edit_key, None)
+                                    st.session_state.pop(name_key, None)
+                                    st.rerun(scope="fragment")
+                    else:
+                        name_cols = st.columns([1, 0.08])
+                        with name_cols[0]:
+                            st.markdown(f"**{pipeline}** — {label}")
+                        with name_cols[1]:
+                            if st.button("✏️", key=f"edit_name_{run_id}", help="Rename extraction"):
+                                st.session_state[edit_key] = True
+                                st.rerun(scope="fragment")
+                    st.caption(f"{started_at} · {status_badge}")
+                with top[1]:
+                    total = max(meta.get("total", 0), 0)
+                    if total:
+                        st.caption(f"{meta.get('processed', 0):,} / {total:,} processed")
+
+                if status in _ACTIVE_RUN_STATUSES:
+                    if run_id == _live_run_id:
+                        st.caption("Live progress and Cancel are shown at the top of this page ↑")
+                    else:
+                        st.caption("Not active in this app instance (e.g. after a restart) — nothing to cancel.")
+                else:
+                    m = st.columns(5)
+                    m[0].metric("Saved", f"{meta.get('successful', 0):,}")
+                    m[1].metric("Failed", f"{meta.get('errors', 0):,}")
+                    m[2].metric("Duplicates", f"{meta.get('duplicate_count', 0):,}")
+                    if meta.get("pipeline") == "mediacloud":
+                        m[3].metric("National press", f"{meta.get('national_count', 0):,}")
+                        m[4].metric("Regional press", f"{meta.get('regional_count', 0):,}")
+
+                    corpus_bytes = read_run_file(run_id, "corpus.txt")
+                    failed_bytes = read_run_file(run_id, "failed.txt")
+                    n_cols = 5 if meta.get("pipeline") == "mediacloud" else 2
+                    dl = st.columns(n_cols)
+                    with dl[0]:
+                        if corpus_bytes:
+                            st.download_button("Corpus", data=corpus_bytes, file_name=f"{run_id}_corpus.txt", mime="text/plain", use_container_width=True, key=f"dl_corpus_{run_id}")
+                    with dl[1]:
+                        if failed_bytes:
+                            st.download_button("Failure log", data=failed_bytes, file_name=f"{run_id}_failed.txt", mime="text/plain", use_container_width=True, key=f"dl_failed_{run_id}")
+                    if meta.get("pipeline") == "mediacloud":
+                        initial_stats_bytes = read_run_file(run_id, "initial_stats.csv")
+                        saved_stats_bytes = read_run_file(run_id, "saved_stats.csv")
+                        coverage_html_bytes = read_run_file(run_id, "coverage_chart.html")
+                        with dl[2]:
+                            if initial_stats_bytes:
+                                st.download_button("Initial stats", data=initial_stats_bytes, file_name=f"{run_id}_initial_stats.csv", mime="text/csv", use_container_width=True, key=f"dl_ist_{run_id}")
+                        with dl[3]:
+                            if saved_stats_bytes:
+                                st.download_button("Saved stats", data=saved_stats_bytes, file_name=f"{run_id}_saved_stats.csv", mime="text/csv", use_container_width=True, key=f"dl_sst_{run_id}")
+                        with dl[4]:
+                            if coverage_html_bytes:
+                                st.download_button("Coverage graph", data=coverage_html_bytes, file_name=f"{run_id}_coverage_chart.html", mime="text/html", use_container_width=True, key=f"dl_cov_{run_id}")
+
+                    confirm_key = f"confirm_delete_{run_id}"
+                    if not st.session_state.get(confirm_key):
+                        if st.button("Delete", key=f"delete_{run_id}"):
+                            st.session_state[confirm_key] = True
+                            st.rerun(scope="fragment")
+                    else:
+                        st.warning("Delete this extraction permanently? This cannot be undone.")
+                        dc1, dc2 = st.columns(2)
+                        with dc1:
+                            if st.button("Yes, delete", type="primary", key=f"delete_confirm_{run_id}"):
+                                delete_run(run_id)
+                                st.session_state.pop(confirm_key, None)
+                                st.rerun(scope="fragment")
+                        with dc2:
+                            if st.button("Cancel", key=f"delete_back_{run_id}"):
+                                st.session_state.pop(confirm_key, None)
+                                st.rerun(scope="fragment")
+
+    _recent_content()
+
+    if _scroll_to_top_pending:
+        # Placed after _recent_content() (rather than at the top of the page)
+        # so it runs once the full run list has actually been sent to the
+        # browser — scrolling too early, before that content streams in,
+        # left the page still short and the scroll had nothing to "stick" to.
+        # Belt-and-suspenders: try several likely scroll targets (Streamlit's
+        # DOM structure/selectors have changed across versions) and repeat
+        # for ~1.5s in case more content keeps arriving right after.
+        st.components.v1.html(
+            """<script>
+            (function () {
+                function scrollTopmost() {
+                    try {
+                        var w = window.parent;
+                        var d = w.document;
+                        w.scrollTo(0, 0);
+                        if (d.scrollingElement) d.scrollingElement.scrollTop = 0;
+                        if (d.documentElement) d.documentElement.scrollTop = 0;
+                        if (d.body) d.body.scrollTop = 0;
+                        var sel = 'section.main, [data-testid="stMain"], [data-testid="stAppViewContainer"], main';
+                        d.querySelectorAll(sel).forEach(function (el) { el.scrollTop = 0; });
+                    } catch (e) { /* cross-origin or not ready yet: ignore, next tick retries */ }
+                }
+                scrollTopmost();
+                var tries = 0;
+                var interval = setInterval(function () {
+                    scrollTopmost();
+                    tries += 1;
+                    if (tries > 15) { clearInterval(interval); }
+                }, 100);
+            })();
+            </script>""",
+            height=0,
+        )
 
 def main():
     st.set_page_config(
@@ -2984,6 +3978,18 @@ def main():
         st.markdown(
             """
             <style>
+            /* The landing page is intentionally dark-background/white-text,
+               unlike the rest of the app. It must NOT rely on Streamlit's
+               theme (system dark/light preference, or any pinned
+               config.toml theme) for its background, or the hardcoded
+               white text below becomes invisible whenever that background
+               resolves to a light color. Pin it explicitly here instead.
+               This only affects the landing screen: this block only
+               renders while toolkit_input_source is None, and every other
+               page already sets its own explicit .stApp background. */
+            .stApp {
+                background: #0e1117 !important;
+            }
             .app-credit {
                 position: fixed;
                 bottom: 6px;
@@ -2994,6 +4000,23 @@ def main():
                 z-index: 9999;
                 pointer-events: none;
             }
+            @keyframes iramuteq-live-pulse {
+                0% { opacity: 1; }
+                50% { opacity: .35; }
+                100% { opacity: 1; }
+            }
+            .iramuteq-live-badge {
+                display: inline-block;
+                margin-top: .5rem;
+                padding: .2rem .6rem;
+                border-radius: 999px;
+                background: #dc2626;
+                color: #fff;
+                font-size: .72rem;
+                font-weight: 700;
+                letter-spacing: .04em;
+                animation: iramuteq-live-pulse 1.4s ease-in-out infinite;
+            }
             </style>
             <div class="app-credit">Created by Panos Tsimpoukis, LERASS (UT) · PhEPoC-ST (NTUA)</div>
             """,
@@ -3002,25 +4025,34 @@ def main():
         st.markdown('<div style="font-size:.78rem; letter-spacing:.14em; text-transform:uppercase; color:#fff; font-weight:700; margin-bottom:.5rem;">Open research utility · corpus preparation</div>', unsafe_allow_html=True)
         st.markdown('<h1 style="font-family:Georgia,\'Times New Roman\',serif; font-size:clamp(2.2rem,4vw,3.65rem); line-height:1.05; color:#fff; margin:0; font-weight:600;">IRaMuTeQ corpus construction</h1>', unsafe_allow_html=True)
         st.markdown(
-            '<div style="font-size:1.08rem; line-height:1.65; color:#fff; max-width:900px; margin-top:1rem;">Build a textual corpus for IRaMuTeQ from CrowdTangle exports, any CSV file, or a MediaCloud export. Choose your input source to get started.</div>',
+            '<div style="font-size:1.08rem; line-height:1.65; color:#fff; max-width:900px; margin-top:1rem;">Build a textual corpus for IRaMuTeQ from Meta Content Library exports (Facebook or Instagram), any CSV file, or a MediaCloud export. Choose your input source to get started.</div>',
             unsafe_allow_html=True,
         )
         st.markdown('<div style="font-family:Georgia,\'Times New Roman\',serif; font-size:1.55rem; color:#fff; margin:2.2rem 0 1rem;">Choose your input source</div>', unsafe_allow_html=True)
+
+        mediacloud_running = any(m.get("status") in _ACTIVE_RUN_STATUSES for m in list_runs(pipeline="mediacloud"))
 
         cols = st.columns(3)
         for col, key in zip(cols, INPUT_SOURCES):
             info = INPUT_SOURCES[key]
             with col:
+                live_badge = '<div class="iramuteq-live-badge">● Extraction running</div>' if (key == "MediaCloud" and mediacloud_running) else ""
                 st.markdown(
                     f'<div style="border:1px solid #d9dee8; border-radius:12px; padding:1.1rem 1.2rem; background:#fff; min-height:150px;">'
                     f'<div style="font-weight:700; color:#111; margin-bottom:.4rem;">{info["label"]}</div>'
                     f'<div style="color:#555; font-size:.92rem; line-height:1.45;">{info["description"]}</div>'
+                    f'{live_badge}'
                     f'</div>',
                     unsafe_allow_html=True,
                 )
                 if st.button(f"Use {info['label']}", key=f"choose_source_{key}", use_container_width=True):
                     st.session_state["toolkit_input_source"] = key
                     st.rerun()
+
+        st.markdown("<div style='margin-top:1.5rem;'></div>", unsafe_allow_html=True)
+        if st.button("📂 Extractions manager", use_container_width=False):
+            st.session_state["toolkit_input_source"] = "Extractions manager"
+            st.rerun()
         return
 
     # ---- Proceed into the matching pipeline ----
@@ -3032,8 +4064,10 @@ def main():
             st.rerun()
         st.markdown("---")
 
-    if chosen in ("CrowdTangle", "Any CSV"):
+    if chosen in ("Meta Content Library", "Any CSV"):
         run_corpus_builder_app(forced_source_mode=chosen)
+    elif chosen == "Extractions manager":
+        render_recent_extractions()
     else:
         run_mediacloud_app()
 
