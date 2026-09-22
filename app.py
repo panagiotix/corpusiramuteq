@@ -587,25 +587,25 @@ def run_corpus_builder_app(forced_source_mode=None):
         saved = failed = duplicates = empty_text = filtered_short = 0
         seen = set()
         for row in rows:
-            rawnb = row.get("_rawnb", "")
+            rownumber = row.get("_rawnb", "")
             text = cleaner(row.get(text_col, ""))
             text = apply_advanced_cleaning(text, advanced_options)
             if not text:
                 failed += 1; empty_text += 1
-                log.write(f"[ROW {rawnb}]\nerror: Empty text in selected column '{text_col}'\n{'-'*70}\n\n")
+                log.write(f"[ROW {rownumber}]\nerror: Empty text in selected column '{text_col}'\n{'-'*70}\n\n")
                 continue
             if min_length and len(text) < min_length:
                 failed += 1; filtered_short += 1
-                log.write(f"[ROW {rawnb}]\nerror: Text shorter than the minimum length ({len(text)} < {min_length} characters)\n{'-'*70}\n\n")
+                log.write(f"[ROW {rownumber}]\nerror: Text shorter than the minimum length ({len(text)} < {min_length} characters)\n{'-'*70}\n\n")
                 continue
             meta = [(c, row.get(c, "")) for c in metadata_cols]
-            meta.append(("rawnb", rawnb))
+            meta.append(("rownumber", rownumber))
             record = build_header(meta) + "\n" + text
             dedupe_key = text if dedupe_on_text_only else record
             if dedupe_key in seen:
                 duplicates += 1
                 what = "text (identical to an earlier row, ignoring metadata)" if dedupe_on_text_only else "record"
-                log.write(f"[ROW {rawnb}]\nerror: Duplicate corpus {what}\n{'-'*70}\n\n")
+                log.write(f"[ROW {rownumber}]\nerror: Duplicate corpus {what}\n{'-'*70}\n\n")
                 continue
             seen.add(dedupe_key)
             output.write(record + "\n\n")
@@ -620,7 +620,7 @@ def run_corpus_builder_app(forced_source_mode=None):
         saved = failed = duplicates = empty_text = filtered_short = 0
         seen = set()
         for row in rows:
-            rawnb = row.get("_rawnb", "")
+            rownumber = row.get("_rawnb", "")
             text = clean_meta_text(row.get(text_col, ""))
             if include_description and desc_col != "— none —":
                 desc = clean_meta_text(row.get(desc_col, ""))
@@ -629,11 +629,11 @@ def run_corpus_builder_app(forced_source_mode=None):
             text = apply_advanced_cleaning(text, advanced_options)
             if not text:
                 failed += 1; empty_text += 1
-                log.write(f"[ROW {rawnb}]\nerror: Empty text\n{'-'*70}\n\n")
+                log.write(f"[ROW {rownumber}]\nerror: Empty text\n{'-'*70}\n\n")
                 continue
             if min_length and len(text) < min_length:
                 failed += 1; filtered_short += 1
-                log.write(f"[ROW {rawnb}]\nerror: Text shorter than the minimum length ({len(text)} < {min_length} characters)\n{'-'*70}\n\n")
+                log.write(f"[ROW {rownumber}]\nerror: Text shorter than the minimum length ({len(text)} < {min_length} characters)\n{'-'*70}\n\n")
                 continue
             meta = []
             if group_col != "— none —":
@@ -648,13 +648,13 @@ def run_corpus_builder_app(forced_source_mode=None):
                     meta.append(("ym", f"{year}-{month}"))
             for c in extra_cols:
                 meta.append((c, row.get(c, "")))
-            meta.append(("rawnb", rawnb))
+            meta.append(("rownumber", rownumber))
             record = build_header(meta) + "\n" + text
             dedupe_key = text if dedupe_on_text_only else record
             if dedupe_key in seen:
                 duplicates += 1
                 what = "text (identical to an earlier row, ignoring metadata)" if dedupe_on_text_only else "record"
-                log.write(f"[ROW {rawnb}]\nerror: Duplicate {what}\n{'-'*70}\n\n")
+                log.write(f"[ROW {rownumber}]\nerror: Duplicate {what}\n{'-'*70}\n\n")
                 continue
             seen.add(dedupe_key)
             output.write(record + "\n\n")
@@ -750,10 +750,10 @@ def run_corpus_builder_app(forced_source_mode=None):
         st.markdown('<div class="citation-box"><strong>What is an IRaMuTeQ corpus?</strong> Each document begins with a line starting with <code>****</code>. Metadata variables are written as <code>*variable_value</code>, followed by the text of the document on the next line. The application cleans structural characters such as <code>*</code> and tabs before export.</div>', unsafe_allow_html=True)
 
         st.markdown('<div class="section-title">IRaMuTeQ text format</div>', unsafe_allow_html=True)
-        st.code("""**** *source_example *year_2025 *country_greece *rawnb_12
+        st.code("""**** *source_example *year_2025 *country_greece *rownumber_12
     This is the text of the first document.
 
-    **** *source_example *year_2025 *country_france *rawnb_13
+    **** *source_example *year_2025 *country_france *rownumber_13
     This is the text of the second document.""", language=None)
         st.caption("The exact metadata variables depend on the source and the columns you select.")
 
@@ -888,7 +888,7 @@ def run_corpus_builder_app(forced_source_mode=None):
                 if year: meta.append(("year", year))
                 if year and month: meta.append(("ym", f"{year}-{month}"))
             for c in extra_cols: meta.append((c, p.get(c, "")))
-            meta.append(("rawnb", p.get("_rawnb", "")))
+            meta.append(("rownumber", p.get("_rawnb", "")))
             st.code(build_header(meta) + "\n" + text, language=None)
 
             if st.button("Build Meta Content Library corpus", type="primary", use_container_width=True):
@@ -921,7 +921,7 @@ def run_corpus_builder_app(forced_source_mode=None):
             preview_text = generic_cleaner(p.get(text_col, ""))
             preview_text = apply_advanced_cleaning(preview_text, csv_advanced_options)
             preview_meta = [(c, p.get(c, "")) for c in metadata_cols]
-            preview_meta.append(("rawnb", p.get("_rawnb", "")))
+            preview_meta.append(("rownumber", p.get("_rawnb", "")))
             st.code(build_header(preview_meta) + "\n" + preview_text, language=None)
 
             if st.button("Build IRaMuTeQ corpus", type="primary", use_container_width=True):
@@ -2652,7 +2652,7 @@ def run_mediacloud_app():
             st.dataframe(metadata_preview, use_container_width=True, hide_index=True)
     else:
         st.caption(
-            "No custom metadata selected. The corpus will use the built-in source/date/rawnb metadata, plus type only when Greek classification is enabled."
+            "No custom metadata selected. The corpus will use the built-in source/date/rownumber metadata, plus type only when Greek classification is enabled."
         )
 
     # ------------------------------------------------------------
@@ -2673,13 +2673,14 @@ def run_mediacloud_app():
             """
             **IRaMuTeQ corpus**
 
-            Each successfully extracted article receives five core metadata fields:
+            Each successfully extracted article receives up to six core metadata fields:
 
             - `source` — cleaned name of the publication or media source.
             - `year` — publication year.
             - `yearmonth` — publication year and month, in `YYYY-MM` format.
+            - `date` — publication date, in `YYYY-MM-DD` format. Included only when the day is known; otherwise omitted.
             - `type` — built-in source category for Greek corpora: national press or regional press. It is omitted entirely for other-language corpora.
-            - `rawnb` — original row number of the article in the uploaded CSV, useful for tracing the corpus entry back to the source data.
+            - `rownumber` — original row number of the article in the uploaded CSV, useful for tracing the corpus entry back to the source data.
 
             **Custom metadata**
 
@@ -2725,7 +2726,7 @@ def run_mediacloud_app():
 
         Initial counts come from the selected CSV before URL deduplication.
         Saved counts are reconstructed from the generated IRaMuTeQ TXT corpus by
-        reading each saved article header and using its rawnb to recover the
+        reading each saved article header and using its rownumber to recover the
         original CSV media_name/year. This makes the saved table reflect exactly
         what was actually written to the corpus.
         """
@@ -2750,9 +2751,9 @@ def run_mediacloud_app():
             sources.add(media)
 
         # Reconstruct saved counts directly from the generated TXT corpus.
-        # Every saved article has a header containing *year_YYYY and *rawnb_N.
+        # Every saved article has a header containing *year_YYYY and *rownumber_N.
         saved_counts = defaultdict(lambda: defaultdict(int))
-        header_re = re.compile(r"^\*\*\*\*.*?\*year_(\d{4}).*?\*rawnb_([^\s]+)")
+        header_re = re.compile(r"^\*\*\*\*.*?\*year_(\d{4}).*?\*rownumber_([^\s]+)")
         for line in corpus_text.splitlines():
             if not line.startswith("****"):
                 continue
@@ -3165,6 +3166,8 @@ coverage volume evolved, before any saving/filtering. Use "View by" to switch gr
             job = EXTRACTION_JOBS[job_id]
             job["status"] = "running"
 
+        extraction_started_at = datetime.now()
+
         # Deduplicate URLs, preserving the original CSV row for every unique URL.
         unique_rows = []
         seen = set()
@@ -3364,7 +3367,7 @@ coverage volume evolved, before any saving/filtering. Use "View by" to switch gr
                                     header_parts.append(f"*date_{year}-{month}-{day}")
                                 if press_type is not None:
                                     header_parts.append(f"*type_{press_type}")
-                                header_parts.extend([f"*rawnb_{raw_number}", *custom_tokens])
+                                header_parts.extend([f"*rownumber_{raw_number}", *custom_tokens])
                                 output_buffer.write(" ".join(header_parts) + "\n")
                                 output_buffer.write(article + "\n\n")
                                 successful += 1
@@ -3476,6 +3479,32 @@ coverage volume evolved, before any saving/filtering. Use "View by" to switch gr
 
             corpus_bytes = corpus_text.encode("utf-8")
             failed_bytes = failed_buffer.getvalue().encode("utf-8")
+
+            def _format_bytes(num_bytes):
+                size = float(num_bytes)
+                for unit in ("bytes", "KB", "MB", "GB"):
+                    if size < 1024 or unit == "GB":
+                        return f"{size:.1f} {unit}" if unit != "bytes" else f"{int(size)} bytes"
+                    size /= 1024
+
+            output_name = f"{job_id}_corpus.txt"
+            summary_lines = [
+                "MediaCloud extraction — summary log",
+                "",
+                f"Date and time of extraction: {extraction_started_at.strftime('%Y-%m-%d %H:%M:%S')}",
+                f"Input CSV: {uploaded.name if uploaded is not None else 'unknown'} ({_format_bytes(uploaded.size)})" if uploaded is not None else "Input CSV: unknown",
+                f"Output corpus: {output_name} ({_format_bytes(len(corpus_bytes))})",
+                "",
+                f"Media selected ({len(selected_sources):,}):",
+            ]
+            summary_lines.extend(f"  - {source}" for source in sorted(selected_sources, key=str.lower))
+            summary_lines.extend([
+                "",
+                f"Articles saved: {successful:,}",
+                f"Articles failed: {errors:,}",
+            ])
+            summary_bytes = ("\n".join(summary_lines) + "\n").encode("utf-8")
+
             result = {
                 "corpus": corpus_bytes, "failed": failed_bytes,
                 "initial_stats": initial_stats_bytes, "saved_stats": saved_stats_bytes,
@@ -3492,6 +3521,7 @@ coverage volume evolved, before any saving/filtering. Use "View by" to switch gr
             update(status="cancelled" if cancelled else "completed", result=result, processed=processed)
             write_run_file(job_id, "corpus.txt", corpus_bytes)
             write_run_file(job_id, "failed.txt", failed_bytes)
+            write_run_file(job_id, "summary.txt", summary_bytes)
             write_run_file(job_id, "initial_stats.csv", initial_stats_bytes)
             write_run_file(job_id, "saved_stats.csv", saved_stats_bytes)
             write_run_file(job_id, "daily_totals.csv", daily_totals_bytes)
@@ -3637,7 +3667,7 @@ coverage volume evolved, before any saving/filtering. Use "View by" to switch gr
             st.caption(f"Extraction success rate: **{100 * out['successful'] / out['rows_processed']:.1f}%** ({out['successful']:,} of {out['rows_processed']:,} processed records).")
 
         st.markdown("### Publication statistics")
-        st.caption("Initial counts come from the selected CSV. Saved counts are reconstructed from the generated .txt corpus using each article header and its original MediaCloud row number (rawnb).")
+        st.caption("Initial counts come from the selected CSV. Saved counts are reconstructed from the generated .txt corpus using each article header and its original MediaCloud row number (rownumber).")
         table_cols_1 = st.columns([4, 1])
         with table_cols_1[0]:
             st.markdown("#### Initial articles in the selected CSV")
@@ -3716,7 +3746,7 @@ coverage volume evolved, before any saving/filtering. Use "View by" to switch gr
 
                 **Corpus counts** can therefore differ from publication statistics because records may be excluded for duplicate URLs, invalid metadata, inaccessible pages, extraction failures, or insufficient text length.
 
-                **IRaMuTeQ metadata** retain the original MediaCloud row number through the `rawnb` field, allowing the resulting corpus to be traced back to the source CSV.
+                **IRaMuTeQ metadata** retain the original MediaCloud row number through the `rownumber` field, allowing the resulting corpus to be traced back to the source CSV.
                 """
             )
 
@@ -3881,7 +3911,7 @@ def render_recent_extractions():
 
                     corpus_bytes = read_run_file(run_id, "corpus.txt")
                     failed_bytes = read_run_file(run_id, "failed.txt")
-                    n_cols = 5 if meta.get("pipeline") == "mediacloud" else 2
+                    n_cols = 6 if meta.get("pipeline") == "mediacloud" else 2
                     dl = st.columns(n_cols)
                     with dl[0]:
                         if corpus_bytes:
@@ -3893,6 +3923,7 @@ def render_recent_extractions():
                         initial_stats_bytes = read_run_file(run_id, "initial_stats.csv")
                         saved_stats_bytes = read_run_file(run_id, "saved_stats.csv")
                         coverage_html_bytes = read_run_file(run_id, "coverage_chart.html")
+                        summary_log_bytes = read_run_file(run_id, "summary.txt")
                         with dl[2]:
                             if initial_stats_bytes:
                                 st.download_button("Initial stats", data=initial_stats_bytes, file_name=f"{run_id}_initial_stats.csv", mime="text/csv", use_container_width=True, key=f"dl_ist_{run_id}")
@@ -3902,6 +3933,9 @@ def render_recent_extractions():
                         with dl[4]:
                             if coverage_html_bytes:
                                 st.download_button("Coverage graph", data=coverage_html_bytes, file_name=f"{run_id}_coverage_chart.html", mime="text/html", use_container_width=True, key=f"dl_cov_{run_id}")
+                        with dl[5]:
+                            if summary_log_bytes:
+                                st.download_button("Summary log", data=summary_log_bytes, file_name=f"{run_id}_summary.txt", mime="text/plain", use_container_width=True, key=f"dl_summary_{run_id}")
 
                     confirm_key = f"confirm_delete_{run_id}"
                     if not st.session_state.get(confirm_key):
