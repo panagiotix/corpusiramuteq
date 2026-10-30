@@ -1,0 +1,24 @@
+[theme]
+# Pin Streamlit's own dark theme so the header bar, sidebar widgets and
+# buttons look the same in every browser (Chrome, Firefox, Safari...) and
+# on every OS, instead of following the browser's light/dark preference.
+base = "dark"
+
+[server]
+# Disables Streamlit's file-watcher entirely. The app's code never
+# changes while the container is running, so this isn't needed — and
+# leaving it on is risky here: the app continuously writes small files
+# to /app/data (the "Recent extractions" / live-progress data) while a
+# MediaCloud extraction runs, and on some Docker setups (this has been
+# observed with Docker Desktop's virtualized filesystem on Mac) those
+# writes to a mounted volume can trigger spurious "file changed"
+# events. Streamlit reacting to those by reloading the app would wipe
+# the in-memory extraction-progress registry, which looks exactly like
+# "the running extraction disappeared for no reason".
+fileWatcherType = "none"
+runOnSave = false
+
+[browser]
+# Belt-and-suspenders alongside the Dockerfile's HOME=/tmp fix: don't
+# have Streamlit try to phone home usage statistics at all.
+gatherUsageStats = false
