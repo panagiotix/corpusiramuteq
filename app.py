@@ -21,6 +21,7 @@ function names.
 """
 
 import threading
+import time
 import os
 import re
 import json
@@ -957,6 +958,355 @@ def run_corpus_builder_app(forced_source_mode=None):
     main()
 
 
+# Visual identity of the MediaCloud and TikTok pages (light research canvas,
+# dark sidebar, dark buttons with white text).
+ACADEMIC_PAGE_CSS = """
+        <style>
+        :root {
+            --academic-ink: #172033;
+            --academic-muted: #667085;
+            --academic-line: #d9dee8;
+            --academic-paper: #fbfcfe;
+        }
+
+        .stApp {
+            background: var(--academic-paper);
+        }
+
+        .block-container {
+            max-width: 1180px;
+            padding-top: 2.2rem;
+            padding-bottom: 4rem;
+        }
+
+        .research-kicker {
+            font-size: 0.78rem;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: #667085;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+        }
+
+        .research-title {
+            font-family: Georgia, "Times New Roman", serif;
+            font-size: clamp(2.2rem, 4vw, 3.65rem);
+            line-height: 1.05;
+            color: #172033;
+            margin: 0;
+            font-weight: 600;
+        }
+
+        .research-subtitle {
+            font-size: 1.08rem;
+            line-height: 1.65;
+            color: #667085;
+            max-width: 850px;
+            margin-top: 1rem;
+        }
+
+        .section-title {
+            font-family: Georgia, "Times New Roman", serif;
+            font-size: 1.55rem;
+            color: #172033;
+            margin: 2.2rem 0 0.35rem 0;
+        }
+
+        .section-note {
+            color: #667085;
+            margin-bottom: 1rem;
+        }
+
+        .method-card {
+            border: 1px solid #d9dee8;
+            border-radius: 12px;
+            padding: 1.1rem 1.2rem;
+            background: white;
+            min-height: 125px;
+        }
+
+        .method-number {
+            font-size: 0.75rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #667085;
+            font-weight: 700;
+        }
+
+        .method-heading {
+            font-family: Georgia, "Times New Roman", serif;
+            color: #172033;
+            font-size: 1.12rem;
+            margin-top: 0.35rem;
+        }
+
+        .method-text {
+            color: #667085;
+            font-size: 0.91rem;
+            line-height: 1.45;
+        }
+
+        .citation-box {
+            border-left: 3px solid #172033;
+            background: white;
+            padding: 0.85rem 1rem;
+            color: #475467;
+            font-size: 0.9rem;
+            line-height: 1.55;
+            margin: 1rem 0 1.5rem 0;
+        }
+
+        .footer-line {
+            border-top: 1px solid #d9dee8;
+            margin-top: 3rem;
+            padding-top: 1rem;
+            color: #667085;
+            font-size: 0.82rem;
+        }
+
+        div[data-testid="stMetric"] {
+            background: white;
+            border: 1px solid #d9dee8;
+            padding: 0.85rem;
+            border-radius: 10px;
+        }
+
+        div[data-testid="stFileUploader"] {
+            background: white;
+            border: 1px dashed #b9c1cf;
+            border-radius: 12px;
+            padding: 0.35rem;
+        }
+
+        .stButton > button, .stDownloadButton > button {
+            border-radius: 8px;
+            font-weight: 600;
+        }
+
+        [data-testid="stSidebar"] {
+            border-right: 1px solid #d9dee8;
+        }
+
+        /* High-contrast text for accessibility and reliable rendering across themes. */
+        .stApp, .stApp p, .stApp label, .stApp span, .stApp div,
+        [data-testid="stSidebar"], [data-testid="stSidebar"] p,
+        [data-testid="stSidebar"] label, [data-testid="stSidebar"] span {
+            color: #111111;
+        }
+        .research-kicker, .section-note, .research-subtitle, .method-text,
+        .method-number, .footer-line, .stCaption, [data-testid="stCaptionContainer"] {
+            color: #444444 !important;
+        }
+        .research-title, .section-title, .method-heading {
+            color: #111111 !important;
+        }
+        [data-testid="stMetricValue"], [data-testid="stMetricLabel"] {
+            color: #111111 !important;
+        }
+        input, textarea, [data-baseweb="select"] * {
+            color: #111111 !important;
+        }
+        code {
+            color: #111111 !important;
+        }
+
+        /* Dark controls: keep text white wherever Streamlit renders a dark widget. */
+        [data-testid="stSidebar"] {
+            background: #111111 !important;
+        }
+        [data-testid="stSidebar"] *,
+        [data-testid="stSidebar"] p,
+        [data-testid="stSidebar"] label,
+        [data-testid="stSidebar"] span,
+        [data-testid="stSidebar"] div,
+        [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] * {
+            color: #ffffff !important;
+        }
+
+        [data-testid="stSidebar"] input,
+        [data-testid="stSidebar"] textarea,
+        [data-testid="stSidebar"] [data-baseweb="select"],
+        [data-testid="stSidebar"] [data-baseweb="input"],
+        [data-testid="stSidebar"] [role="spinbutton"] {
+            background-color: #111111 !important;
+            color: #ffffff !important;
+            -webkit-text-fill-color: #ffffff !important;
+            border-color: #555555 !important;
+        }
+
+        [data-testid="stSidebar"] input::placeholder,
+        [data-testid="stSidebar"] textarea::placeholder {
+            color: #d0d0d0 !important;
+            -webkit-text-fill-color: #d0d0d0 !important;
+        }
+
+        .stButton > button,
+        .stDownloadButton > button,
+        [data-testid="stFormSubmitButton"] > button {
+            background-color: #111111 !important;
+            color: #ffffff !important;
+            -webkit-text-fill-color: #ffffff !important;
+            border: 1px solid #111111 !important;
+        }
+
+        .stButton > button *,
+        .stDownloadButton > button *,
+        [data-testid="stFormSubmitButton"] > button * {
+            color: #ffffff !important;
+            -webkit-text-fill-color: #ffffff !important;
+        }
+
+        .stButton > button:hover,
+        .stDownloadButton > button:hover,
+        [data-testid="stFormSubmitButton"] > button:hover {
+            background-color: #2b2b2b !important;
+            color: #ffffff !important;
+        }
+
+        /* Keep the main source-selection labels readable on the light research canvas. */
+        [data-testid="stCheckbox"] label,
+        [data-testid="stCheckbox"] label p,
+        [data-testid="stCheckbox"] label span {
+            color: #111111 !important;
+        }
+
+        /* High-contrast uploader: the selected filename must remain readable. */
+        [data-testid="stFileUploader"] section,
+        [data-testid="stFileUploaderDropzone"],
+        [data-testid="stFileUploaderDropzoneInstructions"],
+        [data-testid="stFileUploaderFileName"],
+        [data-testid="stFileUploaderFileName"] *,
+        [data-testid="stFileUploader"] small {
+            color: #111111 !important;
+            -webkit-text-fill-color: #111111 !important;
+        }
+        [data-testid="stFileUploaderDropzone"] {
+            background: #ffffff !important;
+            border-color: #777777 !important;
+        }
+
+        /* High-contrast comparison selector: dark control with white text and icons. */
+        div[data-testid="stSelectbox"] [data-baseweb="select"],
+        div[data-testid="stSelectbox"] [data-baseweb="select"] > div,
+        div[data-testid="stSelectbox"] [data-baseweb="select"] * {
+            background-color: #111111 !important;
+            color: #ffffff !important;
+            -webkit-text-fill-color: #ffffff !important;
+            border-color: #555555 !important;
+        }
+        div[data-testid="stSelectbox"] [data-baseweb="select"] svg {
+            fill: #ffffff !important;
+            color: #ffffff !important;
+        }
+        /* BaseWeb renders the selected value in a nested single-value element;
+           override the global dark-text rule with higher specificity. */
+        div[data-testid="stSelectbox"] [data-baseweb="select"] [class*="singleValue"],
+        div[data-testid="stSelectbox"] [data-baseweb="select"] [class*="singleValue"] span,
+        div[data-testid="stSelectbox"] [data-baseweb="select"] [class*="placeholder"] {
+            color: #ffffff !important;
+            -webkit-text-fill-color: #ffffff !important;
+        }
+        div[data-testid="stSelectbox"] [data-baseweb="select"] input {
+            color: #ffffff !important;
+            -webkit-text-fill-color: #ffffff !important;
+            caret-color: #ffffff !important;
+        }
+        [data-baseweb="popover"] [role="option"],
+        [data-baseweb="popover"] [role="option"] * {
+            color: #ffffff !important;
+            -webkit-text-fill-color: #ffffff !important;
+        }
+        [data-baseweb="popover"] [role="option"] {
+            background-color: #111111 !important;
+        }
+        [data-baseweb="popover"] [role="option"][aria-selected="true"],
+        [data-baseweb="popover"] [role="option"]:hover {
+            background-color: #2b2b2b !important;
+        }
+
+        /* Dataframe/table toolbar: keep action icons visible on the dark toolbar. */
+        [data-testid="stDataFrame"] button,
+        [data-testid="stDataFrame"] button *,
+        [data-testid="stDataFrame"] [role="button"],
+        [data-testid="stDataFrame"] [role="button"] * {
+            color: #ffffff !important;
+            fill: #ffffff !important;
+            stroke: #ffffff !important;
+        }
+        [data-testid="stDataFrame"] [data-testid="stElementToolbar"] {
+            background-color: #111111 !important;
+        }
+
+        /* Download buttons: Streamlit may render the label in nested elements
+           that inherit the global light-text rule. Force every visible part to white. */
+        [data-testid="stDownloadButton"] > button,
+        [data-testid="stDownloadButton"] > button *,
+        div.stDownloadButton > button,
+        div.stDownloadButton > button *,
+        .stDownloadButton button p,
+        .stDownloadButton button span,
+        .stDownloadButton button div,
+        .stDownloadButton button svg,
+        .stDownloadButton button svg *,
+        .stDownloadButton button path {
+            color: #ffffff !important;
+            -webkit-text-fill-color: #ffffff !important;
+            fill: #ffffff !important;
+            stroke: #ffffff !important;
+        }
+        [data-testid="stDownloadButton"] > button,
+        div.stDownloadButton > button {
+            background-color: #111111 !important;
+            border-color: #111111 !important;
+        }
+
+        /* Comparison selectbox: force the selected value itself to white.
+           This intentionally targets the BaseWeb value node rather than only
+           the outer select container. */
+        [data-testid="stSelectbox"] [data-baseweb="select"] [class*="singleValue"],
+        [data-testid="stSelectbox"] [data-baseweb="select"] [class*="singleValue"] *,
+        [data-testid="stSelectbox"] [data-baseweb="select"] [class*="placeholder"],
+        [data-testid="stSelectbox"] [data-baseweb="select"] [class*="placeholder"] *,
+        [data-testid="stSelectbox"] [data-baseweb="select"] > div,
+        [data-testid="stSelectbox"] [data-baseweb="select"] > div * {
+            color: #ffffff !important;
+            -webkit-text-fill-color: #ffffff !important;
+        }
+        [data-testid="stSelectbox"] [data-baseweb="select"] svg,
+        [data-testid="stSelectbox"] [data-baseweb="select"] svg * {
+            color: #ffffff !important;
+            fill: #ffffff !important;
+            stroke: #ffffff !important;
+        }
+
+        /* File uploader: Upload/browse action must use white text and icon. */
+        [data-testid="stFileUploader"] button,
+        [data-testid="stFileUploader"] button *,
+        [data-testid="stFileUploader"] [role="button"],
+        [data-testid="stFileUploader"] [role="button"] * {
+            background-color: #111111 !important;
+            color: #ffffff !important;
+            -webkit-text-fill-color: #ffffff !important;
+            fill: #ffffff !important;
+            stroke: #ffffff !important;
+            border-color: #111111 !important;
+        }
+
+        /* Metadata field names on dark research cards. */
+        .metadata-card {
+            background: #111111 !important;
+            border: 1px solid #333333 !important;
+            border-radius: 10px !important;
+            padding: 1.1rem 1.2rem !important;
+        }
+        .metadata-card, .metadata-card * {
+            color: #ffffff !important;
+            -webkit-text-fill-color: #ffffff !important;
+        }
+        </style>
+"""
+
+
 # ============================================================
 # TOOL 2: MediaCloud -> IRaMuTeQ
 # — unchanged mechanism from the original app1.py —
@@ -1794,356 +2144,9 @@ def run_mediacloud_app():
 
 
     # ------------------------------------------------------------
-    # Visual identity
+    # Visual identity (shared with the TikTok page: ACADEMIC_PAGE_CSS)
     # ------------------------------------------------------------
-    st.markdown(
-        """
-        <style>
-        :root {
-            --academic-ink: #172033;
-            --academic-muted: #667085;
-            --academic-line: #d9dee8;
-            --academic-paper: #fbfcfe;
-        }
-
-        .stApp {
-            background: var(--academic-paper);
-        }
-
-        .block-container {
-            max-width: 1180px;
-            padding-top: 2.2rem;
-            padding-bottom: 4rem;
-        }
-
-        .research-kicker {
-            font-size: 0.78rem;
-            letter-spacing: 0.14em;
-            text-transform: uppercase;
-            color: #667085;
-            font-weight: 700;
-            margin-bottom: 0.5rem;
-        }
-
-        .research-title {
-            font-family: Georgia, "Times New Roman", serif;
-            font-size: clamp(2.2rem, 4vw, 3.65rem);
-            line-height: 1.05;
-            color: #172033;
-            margin: 0;
-            font-weight: 600;
-        }
-
-        .research-subtitle {
-            font-size: 1.08rem;
-            line-height: 1.65;
-            color: #667085;
-            max-width: 850px;
-            margin-top: 1rem;
-        }
-
-        .section-title {
-            font-family: Georgia, "Times New Roman", serif;
-            font-size: 1.55rem;
-            color: #172033;
-            margin: 2.2rem 0 0.35rem 0;
-        }
-
-        .section-note {
-            color: #667085;
-            margin-bottom: 1rem;
-        }
-
-        .method-card {
-            border: 1px solid #d9dee8;
-            border-radius: 12px;
-            padding: 1.1rem 1.2rem;
-            background: white;
-            min-height: 125px;
-        }
-
-        .method-number {
-            font-size: 0.75rem;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            color: #667085;
-            font-weight: 700;
-        }
-
-        .method-heading {
-            font-family: Georgia, "Times New Roman", serif;
-            color: #172033;
-            font-size: 1.12rem;
-            margin-top: 0.35rem;
-        }
-
-        .method-text {
-            color: #667085;
-            font-size: 0.91rem;
-            line-height: 1.45;
-        }
-
-        .citation-box {
-            border-left: 3px solid #172033;
-            background: white;
-            padding: 0.85rem 1rem;
-            color: #475467;
-            font-size: 0.9rem;
-            line-height: 1.55;
-            margin: 1rem 0 1.5rem 0;
-        }
-
-        .footer-line {
-            border-top: 1px solid #d9dee8;
-            margin-top: 3rem;
-            padding-top: 1rem;
-            color: #667085;
-            font-size: 0.82rem;
-        }
-
-        div[data-testid="stMetric"] {
-            background: white;
-            border: 1px solid #d9dee8;
-            padding: 0.85rem;
-            border-radius: 10px;
-        }
-
-        div[data-testid="stFileUploader"] {
-            background: white;
-            border: 1px dashed #b9c1cf;
-            border-radius: 12px;
-            padding: 0.35rem;
-        }
-
-        .stButton > button, .stDownloadButton > button {
-            border-radius: 8px;
-            font-weight: 600;
-        }
-
-        [data-testid="stSidebar"] {
-            border-right: 1px solid #d9dee8;
-        }
-
-        /* High-contrast text for accessibility and reliable rendering across themes. */
-        .stApp, .stApp p, .stApp label, .stApp span, .stApp div,
-        [data-testid="stSidebar"], [data-testid="stSidebar"] p,
-        [data-testid="stSidebar"] label, [data-testid="stSidebar"] span {
-            color: #111111;
-        }
-        .research-kicker, .section-note, .research-subtitle, .method-text,
-        .method-number, .footer-line, .stCaption, [data-testid="stCaptionContainer"] {
-            color: #444444 !important;
-        }
-        .research-title, .section-title, .method-heading {
-            color: #111111 !important;
-        }
-        [data-testid="stMetricValue"], [data-testid="stMetricLabel"] {
-            color: #111111 !important;
-        }
-        input, textarea, [data-baseweb="select"] * {
-            color: #111111 !important;
-        }
-        code {
-            color: #111111 !important;
-        }
-
-        /* Dark controls: keep text white wherever Streamlit renders a dark widget. */
-        [data-testid="stSidebar"] {
-            background: #111111 !important;
-        }
-        [data-testid="stSidebar"] *,
-        [data-testid="stSidebar"] p,
-        [data-testid="stSidebar"] label,
-        [data-testid="stSidebar"] span,
-        [data-testid="stSidebar"] div,
-        [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] * {
-            color: #ffffff !important;
-        }
-
-        [data-testid="stSidebar"] input,
-        [data-testid="stSidebar"] textarea,
-        [data-testid="stSidebar"] [data-baseweb="select"],
-        [data-testid="stSidebar"] [data-baseweb="input"],
-        [data-testid="stSidebar"] [role="spinbutton"] {
-            background-color: #111111 !important;
-            color: #ffffff !important;
-            -webkit-text-fill-color: #ffffff !important;
-            border-color: #555555 !important;
-        }
-
-        [data-testid="stSidebar"] input::placeholder,
-        [data-testid="stSidebar"] textarea::placeholder {
-            color: #d0d0d0 !important;
-            -webkit-text-fill-color: #d0d0d0 !important;
-        }
-
-        .stButton > button,
-        .stDownloadButton > button,
-        [data-testid="stFormSubmitButton"] > button {
-            background-color: #111111 !important;
-            color: #ffffff !important;
-            -webkit-text-fill-color: #ffffff !important;
-            border: 1px solid #111111 !important;
-        }
-
-        .stButton > button *,
-        .stDownloadButton > button *,
-        [data-testid="stFormSubmitButton"] > button * {
-            color: #ffffff !important;
-            -webkit-text-fill-color: #ffffff !important;
-        }
-
-        .stButton > button:hover,
-        .stDownloadButton > button:hover,
-        [data-testid="stFormSubmitButton"] > button:hover {
-            background-color: #2b2b2b !important;
-            color: #ffffff !important;
-        }
-
-        /* Keep the main source-selection labels readable on the light research canvas. */
-        [data-testid="stCheckbox"] label,
-        [data-testid="stCheckbox"] label p,
-        [data-testid="stCheckbox"] label span {
-            color: #111111 !important;
-        }
-
-        /* High-contrast uploader: the selected filename must remain readable. */
-        [data-testid="stFileUploader"] section,
-        [data-testid="stFileUploaderDropzone"],
-        [data-testid="stFileUploaderDropzoneInstructions"],
-        [data-testid="stFileUploaderFileName"],
-        [data-testid="stFileUploaderFileName"] *,
-        [data-testid="stFileUploader"] small {
-            color: #111111 !important;
-            -webkit-text-fill-color: #111111 !important;
-        }
-        [data-testid="stFileUploaderDropzone"] {
-            background: #ffffff !important;
-            border-color: #777777 !important;
-        }
-
-        /* High-contrast comparison selector: dark control with white text and icons. */
-        div[data-testid="stSelectbox"] [data-baseweb="select"],
-        div[data-testid="stSelectbox"] [data-baseweb="select"] > div,
-        div[data-testid="stSelectbox"] [data-baseweb="select"] * {
-            background-color: #111111 !important;
-            color: #ffffff !important;
-            -webkit-text-fill-color: #ffffff !important;
-            border-color: #555555 !important;
-        }
-        div[data-testid="stSelectbox"] [data-baseweb="select"] svg {
-            fill: #ffffff !important;
-            color: #ffffff !important;
-        }
-        /* BaseWeb renders the selected value in a nested single-value element;
-           override the global dark-text rule with higher specificity. */
-        div[data-testid="stSelectbox"] [data-baseweb="select"] [class*="singleValue"],
-        div[data-testid="stSelectbox"] [data-baseweb="select"] [class*="singleValue"] span,
-        div[data-testid="stSelectbox"] [data-baseweb="select"] [class*="placeholder"] {
-            color: #ffffff !important;
-            -webkit-text-fill-color: #ffffff !important;
-        }
-        div[data-testid="stSelectbox"] [data-baseweb="select"] input {
-            color: #ffffff !important;
-            -webkit-text-fill-color: #ffffff !important;
-            caret-color: #ffffff !important;
-        }
-        [data-baseweb="popover"] [role="option"],
-        [data-baseweb="popover"] [role="option"] * {
-            color: #ffffff !important;
-            -webkit-text-fill-color: #ffffff !important;
-        }
-        [data-baseweb="popover"] [role="option"] {
-            background-color: #111111 !important;
-        }
-        [data-baseweb="popover"] [role="option"][aria-selected="true"],
-        [data-baseweb="popover"] [role="option"]:hover {
-            background-color: #2b2b2b !important;
-        }
-
-        /* Dataframe/table toolbar: keep action icons visible on the dark toolbar. */
-        [data-testid="stDataFrame"] button,
-        [data-testid="stDataFrame"] button *,
-        [data-testid="stDataFrame"] [role="button"],
-        [data-testid="stDataFrame"] [role="button"] * {
-            color: #ffffff !important;
-            fill: #ffffff !important;
-            stroke: #ffffff !important;
-        }
-        [data-testid="stDataFrame"] [data-testid="stElementToolbar"] {
-            background-color: #111111 !important;
-        }
-
-        /* Download buttons: Streamlit may render the label in nested elements
-           that inherit the global light-text rule. Force every visible part to white. */
-        [data-testid="stDownloadButton"] > button,
-        [data-testid="stDownloadButton"] > button *,
-        div.stDownloadButton > button,
-        div.stDownloadButton > button *,
-        .stDownloadButton button p,
-        .stDownloadButton button span,
-        .stDownloadButton button div,
-        .stDownloadButton button svg,
-        .stDownloadButton button svg *,
-        .stDownloadButton button path {
-            color: #ffffff !important;
-            -webkit-text-fill-color: #ffffff !important;
-            fill: #ffffff !important;
-            stroke: #ffffff !important;
-        }
-        [data-testid="stDownloadButton"] > button,
-        div.stDownloadButton > button {
-            background-color: #111111 !important;
-            border-color: #111111 !important;
-        }
-
-        /* Comparison selectbox: force the selected value itself to white.
-           This intentionally targets the BaseWeb value node rather than only
-           the outer select container. */
-        [data-testid="stSelectbox"] [data-baseweb="select"] [class*="singleValue"],
-        [data-testid="stSelectbox"] [data-baseweb="select"] [class*="singleValue"] *,
-        [data-testid="stSelectbox"] [data-baseweb="select"] [class*="placeholder"],
-        [data-testid="stSelectbox"] [data-baseweb="select"] [class*="placeholder"] *,
-        [data-testid="stSelectbox"] [data-baseweb="select"] > div,
-        [data-testid="stSelectbox"] [data-baseweb="select"] > div * {
-            color: #ffffff !important;
-            -webkit-text-fill-color: #ffffff !important;
-        }
-        [data-testid="stSelectbox"] [data-baseweb="select"] svg,
-        [data-testid="stSelectbox"] [data-baseweb="select"] svg * {
-            color: #ffffff !important;
-            fill: #ffffff !important;
-            stroke: #ffffff !important;
-        }
-
-        /* File uploader: Upload/browse action must use white text and icon. */
-        [data-testid="stFileUploader"] button,
-        [data-testid="stFileUploader"] button *,
-        [data-testid="stFileUploader"] [role="button"],
-        [data-testid="stFileUploader"] [role="button"] * {
-            background-color: #111111 !important;
-            color: #ffffff !important;
-            -webkit-text-fill-color: #ffffff !important;
-            fill: #ffffff !important;
-            stroke: #ffffff !important;
-            border-color: #111111 !important;
-        }
-
-        /* Metadata field names on dark research cards. */
-        .metadata-card {
-            background: #111111 !important;
-            border: 1px solid #333333 !important;
-            border-radius: 10px !important;
-            padding: 1.1rem 1.2rem !important;
-        }
-        .metadata-card, .metadata-card * {
-            color: #ffffff !important;
-            -webkit-text-fill-color: #ffffff !important;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.markdown(ACADEMIC_PAGE_CSS, unsafe_allow_html=True)
 
     # ------------------------------------------------------------
     # Header
@@ -3759,6 +3762,1000 @@ coverage volume evolved, before any saving/filtering. Use "View by" to switch gr
 
 
 # ============================================================
+# TOOL 3: TikTok Research API -> IRaMuTeQ
+# Each user enters their OWN Research API credentials (client key +
+# secret of an approved TikTok research project). Credentials live only
+# in the browser session and in the worker thread's memory: they are
+# never written to /app/data, to run metadata, or to any log.
+# ============================================================
+TIKTOK_TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/"
+TIKTOK_VIDEO_QUERY_URL = "https://open.tiktokapis.com/v2/research/video/query/"
+TIKTOK_FIELDS = [
+    "id", "create_time", "username", "region_code", "video_description",
+    "voice_to_text", "hashtag_names", "music_id", "video_duration",
+    "view_count", "like_count", "comment_count", "share_count",
+]
+TIKTOK_WINDOW_DAYS = 30          # the API accepts at most 30 days per request
+TIKTOK_PAGE_SIZE = 100           # max_count upper bound
+TIKTOK_PAGE_DELAY = 1.0          # politeness delay between pages (seconds)
+
+TIKTOK_METADATA_CHOICES = {
+    "date": "Publication date (*date_2026-09-14)",
+    "year": "Year (*year_2026)",
+    "month": "Month (*month_202609)",
+    "region": "Region code (*region_fr)",
+    "user": "Account username (*user_…)",
+    "views": "Views, in thirds of this corpus (*views_low / medium / high)",
+    "likes": "Likes, in thirds of this corpus (*likes_low / medium / high)",
+    "comments": "Comments, in thirds of this corpus (*comments_low / medium / high)",
+    "shares": "Shares, in thirds of this corpus (*shares_low / medium / high)",
+    "videoid": "TikTok video ID, for traceability (*videoid_…)",
+    "texttype": "Text type of the entry (*texttype_description / transcript / both)",
+}
+TIKTOK_DEFAULT_METADATA = ["date", "year", "month", "region", "texttype", "views", "videoid"]
+TIKTOK_ENGAGEMENT_EXPLANATION = (
+    "**What do low / medium / high mean?** For each engagement variable, the videos of *your* corpus "
+    "are ranked from the least to the most viewed (or liked, commented, shared) and cut into three groups "
+    "of roughly equal size: **low** = the bottom third, **medium** = the middle third, **high** = the top third. "
+    "The groups are therefore relative to the corpus you collected, not absolute TikTok standards: "
+    "in one corpus *high* may start at 5,000 views, in another at 2 million. The exact cut-off values used "
+    "for your corpus are written in the extraction's **Summary log** (Extractions manager). "
+    "*missing* means TikTok returned no value; *na* means the corpus has fewer than 3 videos."
+)
+
+
+class TikTokAPIError(Exception):
+    def __init__(self, message, status=None, code=None):
+        super().__init__(message)
+        self.status = status
+        self.code = code
+
+
+class TikTokQuotaExceeded(TikTokAPIError):
+    pass
+
+
+
+def tiktok_get_token(client_key, client_secret):
+    import requests
+    try:
+        r = requests.post(
+            TIKTOK_TOKEN_URL,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            data={"client_key": client_key, "client_secret": client_secret,
+                  "grant_type": "client_credentials"},
+            timeout=30,
+        )
+    except requests.RequestException as e:
+        raise TikTokAPIError(f"Could not reach TikTok to obtain an access token ({type(e).__name__}).")
+    try:
+        payload = r.json()
+    except ValueError:
+        payload = {}
+    token = payload.get("access_token")
+    if r.status_code != 200 or not token:
+        msg = payload.get("error_description") or payload.get("error") or (r.text or "")[:300]
+        raise TikTokAPIError(f"Could not obtain an access token: {msg}", status=r.status_code, code=payload.get("error"))
+    return token, int(payload.get("expires_in") or 7200)
+
+
+class _TikTokToken:
+    """Client access token, refreshed shortly before its 2-hour expiry."""
+
+    def __init__(self, client_key, client_secret):
+        self._key, self._secret = client_key, client_secret
+        self.token, self.expires_at = None, 0.0
+
+    def get(self, force=False):
+        import time
+        if force or not self.token or time.time() > self.expires_at - 300:
+            self.token, ttl = tiktok_get_token(self._key, self._secret)
+            self.expires_at = time.time() + ttl
+        return self.token
+
+
+def tiktok_query_page(token_mgr, query, start_date, end_date, cursor=0, search_id=None, cancelled=None):
+    """One page of /research/video/query/. Returns the response's `data`.
+
+    Refreshes the token on 401, backs off on 5xx / network errors, waits on
+    a 429 and raises TikTokQuotaExceeded if it persists (daily quota)."""
+    import time
+    import requests
+    body = {"query": query, "start_date": start_date, "end_date": end_date,
+            "max_count": TIKTOK_PAGE_SIZE, "cursor": int(cursor or 0), "is_random": False}
+    if search_id:
+        body["search_id"] = search_id
+    url = f"{TIKTOK_VIDEO_QUERY_URL}?fields={','.join(TIKTOK_FIELDS)}"
+    backoffs = [5, 15, 30, 60, 90]
+    rate_limit_waits = 0
+    force_refresh = False
+    last_problem = ""
+    attempt = 0
+    while attempt <= len(backoffs):
+        if cancelled and cancelled():
+            raise TikTokAPIError("Cancelled")
+        token = token_mgr.get(force=force_refresh)
+        force_refresh = False
+        try:
+            r = requests.post(url, json=body, timeout=180, headers={
+                "authorization": f"bearer {token}", "Content-Type": "application/json"})
+        except requests.RequestException as e:
+            last_problem = f"network error ({type(e).__name__})"
+            if attempt < len(backoffs):
+                time.sleep(backoffs[attempt])
+            attempt += 1
+            continue
+        try:
+            payload = r.json()
+        except ValueError:
+            payload = {}
+        err = payload.get("error") or {}
+        code = err.get("code") or ""
+        message = err.get("message") or (r.text or "")[:300]
+        if r.status_code == 200 and code in ("", "ok"):
+            return payload.get("data") or {}
+        if r.status_code == 401 or code in ("access_token_invalid", "access_token_expired"):
+            if attempt == 0 or last_problem != "401":
+                force_refresh = True
+                last_problem = "401"
+                attempt += 1
+                continue
+            raise TikTokAPIError(f"Authentication failed: {message}", status=r.status_code, code=code)
+        if r.status_code == 429 or code == "rate_limit_exceeded":
+            if rate_limit_waits < 2:
+                rate_limit_waits += 1
+                time.sleep(60)
+                continue
+            raise TikTokQuotaExceeded(
+                "TikTok rate limit / daily quota reached. Resume this extraction later "
+                "(the daily quota resets every 24 hours).", status=r.status_code, code=code)
+        if r.status_code >= 500:
+            last_problem = f"HTTP {r.status_code} {code}: {message}"
+            if attempt < len(backoffs):
+                time.sleep(backoffs[attempt])
+            attempt += 1
+            continue
+        raise TikTokAPIError(f"HTTP {r.status_code} {code}: {message}", status=r.status_code, code=code)
+    raise TikTokAPIError(f"TikTok kept failing after several retries: {last_problem}")
+
+
+def tiktok_date_windows(start, end, days=TIKTOK_WINDOW_DAYS):
+    """Split [start, end] (dates, inclusive) into YYYYMMDD windows of <= `days` days."""
+    from datetime import timedelta
+    windows, cur = [], start
+    while cur <= end:
+        w_end = min(cur + timedelta(days=days - 1), end)
+        windows.append([cur.strftime("%Y%m%d"), w_end.strftime("%Y%m%d")])
+        cur = w_end + timedelta(days=1)
+    return windows
+
+
+def _split_terms(text):
+    terms = []
+    for chunk in re.split(r"[\n,;]+", text or ""):
+        chunk = chunk.strip().lstrip("#@").strip()
+        if chunk and chunk not in terms:
+            terms.append(chunk)
+    return terms
+
+
+def tiktok_build_query(keywords, hashtags, usernames, regions, exclude_keywords,
+                       keyword_mode="any", hashtag_mode="any", combine="or"):
+    """Build a Research API query (TikTok's query object has one level only:
+    every `and` condition must hold, at least one `or` condition must hold,
+    and no `not` condition may hold).
+
+    keyword_mode / hashtag_mode: "any" (OR within the group, one IN condition)
+    or "all" (AND within the group, one EQ condition per term).
+    combine: how the keyword group and the hashtag group are joined, "or"/"and".
+    Accounts and regions are always restrictions (AND), each matching any listed value.
+
+    Returns (query, problem) — problem is a message when the requested logic
+    cannot be expressed in TikTok's one-level query syntax."""
+    def group(field, terms, mode):
+        if not terms:
+            return []
+        if mode == "all" and len(terms) > 1:
+            return [{"operation": "EQ", "field_name": field, "field_values": [t]} for t in terms]
+        return [{"operation": "IN", "field_name": field, "field_values": list(terms)}]
+
+    kw = group("keyword", keywords, keyword_mode)
+    ht = group("hashtag_name", hashtags, hashtag_mode)
+    and_c, or_c = [], []
+    if kw and ht and combine == "or":
+        if len(kw) > 1 or len(ht) > 1:
+            return {}, ("TikTok's query syntax cannot express “(all of these keywords) OR (hashtags)”. "
+                        "Choose “any” for both groups, combine them with AND, or write the query yourself "
+                        "in the advanced JSON box.")
+        or_c = kw + ht
+    else:
+        and_c = kw + ht
+    if usernames:
+        and_c.append({"operation": "IN", "field_name": "username", "field_values": list(usernames)})
+    if regions:
+        and_c.append({"operation": "IN", "field_name": "region_code", "field_values": list(regions)})
+    not_c = [{"operation": "IN", "field_name": "keyword", "field_values": list(exclude_keywords)}] if exclude_keywords else []
+    q = {}
+    if and_c:
+        q["and"] = and_c
+    if or_c:
+        q["or"] = or_c
+    if not_c:
+        q["not"] = not_c
+    return q, None
+
+
+def tiktok_describe_query(keywords, hashtags, usernames, regions, exclude_keywords,
+                          keyword_mode, hashtag_mode, combine):
+    """Plain-language reading of the query, shown to the user before launch."""
+    def phrase(terms, mode, what):
+        quoted = ", ".join(f"“{t}”" for t in terms)
+        if len(terms) == 1:
+            return f"the {what} {quoted}"
+        return f"{'ALL' if mode == 'all' else 'ANY'} of the {what}s {quoted}"
+    parts = []
+    content = [p for p in (phrase(keywords, keyword_mode, "keyword") if keywords else "",
+                           phrase(hashtags, hashtag_mode, "hashtag") if hashtags else "") if p]
+    if content:
+        parts.append(f" {combine.upper()} ".join(content))
+    if usernames:
+        parts.append("posted by " + (f"@{usernames[0]}" if len(usernames) == 1 else "any of " + ", ".join("@" + u for u in usernames)))
+    if regions:
+        parts.append("from region " + " or ".join(regions))
+    text = "Videos containing " + " — AND — ".join(parts) if parts else ""
+    if exclude_keywords:
+        text += " — but NOT containing " + " or ".join(f"“{k}”" for k in exclude_keywords)
+    return text
+
+
+# ---------- corpus construction (module-level, used by the worker) ----------
+_TT_URL_RE = re.compile(r"https?://\S+")
+_TT_TAG_RE = re.compile(r"[#@](\w+)", re.UNICODE)
+_TT_EMOJI_RE = re.compile(
+    "[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF"
+    "\U00002190-\U000021FF\U00002B00-\U00002BFF\U0000FE0F\U0000200D\U000020E3]+")
+
+
+def _tt_clean_text(text, opts):
+    if not text:
+        return ""
+    text = str(text).replace("﻿", "").replace("\t", " ")
+    for ch in ("*", "£"):           # structural characters in IRaMuTeQ
+        text = text.replace(ch, " ")
+    if opts.get("remove_urls", True):
+        text = _TT_URL_RE.sub(" ", text)
+    if opts.get("strip_tags", True):
+        text = _TT_TAG_RE.sub(r"\1", text)
+    if opts.get("remove_emojis", True):
+        text = _TT_EMOJI_RE.sub(" ", text)
+    if opts.get("lowercase", True):
+        text = text.lower()         # Python's lower() handles Greek final sigma
+    text = re.sub(r"\.{3,}|…", " ", text)
+    text = re.sub(r"«\s*", "« ", text)
+    text = re.sub(r"\s*»", " »", text)
+    text = re.sub(r"\s+", " ", text.replace("\r", "\n"))
+    return text.strip()
+
+
+def _tt_meta_token(value, fallback="missing"):
+    import unicodedata
+    value = "" if value is None else str(value).strip().lower()
+    value = unicodedata.normalize("NFKD", value)
+    value = "".join(ch for ch in value if not unicodedata.combining(ch))
+    value = value.encode("ascii", "ignore").decode("ascii")
+    value = re.sub(r"[^a-z0-9]+", "-", value)
+    value = re.sub(r"-+", "-", value).strip("-")
+    return value or fallback
+
+
+def _tt_tercile_binner(values):
+    """Return (binner, (q1, q2)): < q1 low, < q2 medium, otherwise high."""
+    nums = sorted(v for v in values if isinstance(v, (int, float)))
+    if len(nums) < 3:
+        return (lambda v: "missing" if not isinstance(v, (int, float)) else "na"), None
+    q1, q2 = nums[len(nums) // 3], nums[(2 * len(nums)) // 3]
+
+    def binner(v):
+        if not isinstance(v, (int, float)):
+            return "missing"
+        if v < q1:
+            return "low"
+        if v < q2:
+            return "medium"
+        return "high"
+    return binner, (q1, q2)
+
+
+def _tt_video_datetime(v):
+    from datetime import datetime as _dt, timezone as _tz
+    try:
+        return _dt.fromtimestamp(int(v.get("create_time")), tz=_tz.utc)
+    except Exception:
+        return None
+
+
+def tiktok_build_corpus(videos, opts):
+    """Return (corpus_bytes, failed_log_bytes, stats)."""
+    import io
+    text_source = opts.get("text_source", "description")
+    metadata = opts.get("metadata", TIKTOK_DEFAULT_METADATA)
+    min_length = int(opts.get("min_length") or 0)
+    count_key = {"views": "view_count", "likes": "like_count", "comments": "comment_count", "shares": "share_count"}
+    binners, thresholds = {}, {}
+    for f in count_key:
+        if f in metadata:
+            binners[f], thresholds[f] = _tt_tercile_binner([v.get(count_key[f]) for v in videos])
+
+    out, log = io.StringIO(), io.StringIO()
+    saved = failed = duplicates = empty = short = 0
+    seen_text = set()
+    videos = sorted(videos, key=lambda v: int(v.get("create_time") or 0))
+    for v in videos:
+        vid = str(v.get("id", ""))
+        desc = _tt_clean_text(v.get("video_description"), opts)
+        transcript = _tt_clean_text(v.get("voice_to_text"), opts)
+        if text_source == "transcript":
+            text, texttype = transcript, "transcript"
+        elif text_source == "both":
+            text = " ".join(t for t in (desc, transcript) if t)
+            # what this entry actually contains (a video may lack one of the two)
+            texttype = "both" if (desc and transcript) else ("description" if desc else "transcript")
+        else:
+            text, texttype = desc, "description"
+        if not text:
+            failed += 1; empty += 1
+            log.write(f"[VIDEO {vid}]\nerror: Empty text ({text_source})\n{'-'*70}\n\n")
+            continue
+        if min_length and len(text) < min_length:
+            failed += 1; short += 1
+            log.write(f"[VIDEO {vid}]\nerror: Text shorter than the minimum length ({len(text)} < {min_length} characters)\n{'-'*70}\n\n")
+            continue
+        if opts.get("dedupe_text", True):
+            if text in seen_text:
+                duplicates += 1
+                log.write(f"[VIDEO {vid}]\nerror: Duplicate text (identical to an earlier video)\n{'-'*70}\n\n")
+                continue
+            seen_text.add(text)
+        dt = _tt_video_datetime(v)
+        parts = ["****"]
+        for field in metadata:
+            if field == "date":
+                parts.append(f"*date_{dt.strftime('%Y-%m-%d') if dt else 'missing'}")
+            elif field == "year":
+                parts.append(f"*year_{dt.strftime('%Y') if dt else 'missing'}")
+            elif field == "month":
+                parts.append(f"*month_{dt.strftime('%Y%m') if dt else 'missing'}")
+            elif field == "region":
+                parts.append(f"*region_{_tt_meta_token(v.get('region_code'))}")
+            elif field == "user":
+                parts.append(f"*user_{_tt_meta_token(v.get('username'))}")
+            elif field in binners:
+                parts.append(f"*{field}_{binners[field](v.get(count_key[field]))}")
+            elif field == "videoid":
+                parts.append(f"*videoid_{_tt_meta_token(vid)}")
+            elif field == "texttype":
+                parts.append(f"*texttype_{texttype}")
+        out.write(" ".join(parts) + "\n" + text + "\n\n")
+        saved += 1
+    stats = {"input": len(videos), "saved": saved, "failed": failed, "duplicates": duplicates,
+             "empty_text": empty, "filtered_short": short, "thresholds": thresholds}
+    return out.getvalue().encode("utf-8"), log.getvalue().encode("utf-8"), stats
+
+
+def tiktok_videos_to_csv(videos):
+    import csv
+    import io
+    buf = io.StringIO()
+    cols = ["id", "create_time_utc"] + [f for f in TIKTOK_FIELDS if f not in ("id", "create_time")]
+    w = csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore")
+    w.writeheader()
+    for v in sorted(videos, key=lambda v: int(v.get("create_time") or 0)):
+        row = dict(v)
+        dt = _tt_video_datetime(v)
+        row["create_time_utc"] = dt.strftime("%Y-%m-%d %H:%M:%S") if dt else ""
+        for k, val in list(row.items()):
+            if isinstance(val, list):
+                row[k] = "|".join(str(x) for x in val)
+        w.writerow(row)
+    return buf.getvalue().encode("utf-8-sig")
+
+
+def _tt_load_videos(run_id):
+    data = read_run_file(run_id, "videos.jsonl") or b""
+    videos, ids = [], set()
+    for line in data.decode("utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            v = json.loads(line)
+        except ValueError:
+            continue
+        vid = str(v.get("id", ""))
+        if vid and vid not in ids:
+            ids.add(vid)
+            videos.append(v)
+    return videos, ids
+
+
+def tiktok_finalize_outputs(run_id, status_label=None):
+    """(Re)build corpus/log/CSV/summary from everything fetched so far."""
+    params = read_run_json(run_id, "params.json", default={}) or {}
+    videos, _ = _tt_load_videos(run_id)
+    corpus, failed_log, stats = tiktok_build_corpus(videos, params.get("corpus_options", {}))
+    write_run_file(run_id, "corpus.txt", corpus)
+    write_run_file(run_id, "failed.txt", failed_log)
+    write_run_file(run_id, "videos.csv", tiktok_videos_to_csv(videos))
+    activity = (read_run_file(run_id, "activity.log") or b"").decode("utf-8", errors="replace")
+    meta = read_run_meta(run_id) or {}
+    summary = [
+        "TikTok Research API → IRaMuTeQ — summary log",
+        "=" * 60,
+        f"Run: {run_id}",
+        f"Label: {meta.get('label', '')}",
+        f"Status: {status_label or meta.get('status', '')}",
+        f"Started: {meta.get('started_at', '')}",
+        f"Last update: {datetime.now().isoformat(timespec='seconds')}",
+        f"Date range: {params.get('start_date')} → {params.get('end_date')} ({len(params.get('windows', []))} window(s) of ≤{TIKTOK_WINDOW_DAYS} days)",
+        f"Max videos: {params.get('max_videos') or 'no limit'}",
+        f"Fields requested: {', '.join(TIKTOK_FIELDS)}",
+        "",
+        f"Query (plain language): {params.get('query_reading', '')}",
+        "Query sent to the API:",
+        json.dumps(params.get("query", {}), ensure_ascii=False, indent=2),
+        "",
+        "Corpus options:",
+        json.dumps(params.get("corpus_options", {}), ensure_ascii=False, indent=2),
+        "",
+        f"Unique videos fetched: {len(videos):,}",
+        f"Texts saved to corpus: {stats['saved']:,}",
+        f"Empty text: {stats['empty_text']:,} · Too short: {stats['filtered_short']:,} · Duplicate text: {stats['duplicates']:,}",
+        "",
+        "Engagement variables (thirds of the videos fetched):",
+    ] + ([f"  *{f}: low < {t[0]:,} ≤ medium < {t[1]:,} ≤ high" if t else f"  *{f}: fewer than 3 videos — all 'na'"
+          for f, t in stats["thresholds"].items()] or ["  (none selected)"]) + [
+        "  low = bottom third, medium = middle third, high = top third of this corpus;",
+        "  the cut-offs are relative to this corpus, not absolute TikTok standards.",
+        "",
+        "Activity:",
+        activity,
+    ]
+    write_run_file(run_id, "summary.txt", "\n".join(summary).encode("utf-8"))
+    return stats, len(videos)
+
+
+def _tiktok_log(run_id, line):
+    append_run_file(run_id, "activity.log", f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {line}\n".encode("utf-8"))
+
+
+def _tiktok_worker(run_id, client_key, client_secret, cancel_event):
+    import time
+    params = read_run_json(run_id, "params.json", default={}) or {}
+    windows = params.get("windows", [])
+    query = params.get("query", {})
+    max_videos = int(params.get("max_videos") or 0)
+    state = read_run_json(run_id, "state.json", default=None) or {"window": 0, "cursor": 0, "search_id": None}
+    _, seen = _tt_load_videos(run_id)
+    token_mgr = _TikTokToken(client_key, client_secret)
+    t0 = time.time()
+    start_window = state.get("window", 0)
+
+    # Liveness signal, in its own file (never in meta.json, so it cannot race
+    # with status updates). Streamlit re-executes app.py on every interaction,
+    # which empties module-level dicts such as EXTRACTION_JOBS — so "is this
+    # run still alive?" must be answered from disk, not from memory.
+    heartbeat_stop = threading.Event()
+
+    def _beat():
+        while not heartbeat_stop.wait(TIKTOK_HEARTBEAT_SECONDS):
+            _tiktok_heartbeat(run_id)
+    _tiktok_heartbeat(run_id)
+    threading.Thread(target=_beat, daemon=True).start()
+
+    def cancelled():
+        if cancel_event.is_set():
+            return True
+        m = read_run_meta(run_id) or {}
+        return bool(m.get("cancel_requested"))
+
+    def progress(**fields):
+        with EXTRACTION_JOBS_LOCK:
+            job = EXTRACTION_JOBS.get(run_id)
+            if job is not None:
+                job.update(fields)
+        update_run(run_id, **fields)
+
+    final_status, error_message = "completed", ""
+    try:
+        token_mgr.get()
+        wi = state.get("window", 0)
+        cursor, search_id = state.get("cursor", 0), state.get("search_id")
+        resumed_mid_window = bool(cursor)
+        stop_all = False
+        while wi < len(windows) and not stop_all:
+            w_start, w_end = windows[wi]
+            window_new = 0
+            while True:
+                if cancelled():
+                    final_status, stop_all = "cancelled", True
+                    break
+                if max_videos and len(seen) >= max_videos:
+                    _tiktok_log(run_id, f"Reached the maximum of {max_videos:,} videos; stopping.")
+                    stop_all = True
+                    break
+                progress(current=f"Window {wi + 1}/{len(windows)} ({w_start}–{w_end}) · {len(seen):,} videos so far")
+                try:
+                    data = tiktok_query_page(token_mgr, query, w_start, w_end, cursor, search_id, cancelled=cancelled)
+                except TikTokQuotaExceeded:
+                    raise
+                except TikTokAPIError as e:
+                    if str(e) == "Cancelled":
+                        final_status, stop_all = "cancelled", True
+                        break
+                    if resumed_mid_window and cursor:
+                        # search_id from a previous session may have expired:
+                        # restart this window from the beginning (duplicates are skipped).
+                        _tiktok_log(run_id, f"Window {w_start}–{w_end}: could not continue the earlier pagination ({e}); restarting this window.")
+                        cursor, search_id, resumed_mid_window = 0, None, False
+                        continue
+                    if getattr(e, "status", None) == 401:
+                        raise
+                    _tiktok_log(run_id, f"Window {w_start}–{w_end}: stopped at cursor {cursor} — {e}. "
+                                        f"Videos collected so far in this window are kept.")
+                    progress(errors=int((read_run_meta(run_id) or {}).get("errors", 0)) + 1)
+                    break
+                resumed_mid_window = False
+                videos = data.get("videos") or []
+                new = []
+                for v in videos:
+                    vid = str(v.get("id", ""))
+                    if vid and vid not in seen:
+                        seen.add(vid)
+                        new.append(v)
+                        if max_videos and len(seen) >= max_videos:
+                            break
+                if new:
+                    append_run_file(run_id, "videos.jsonl",
+                                    ("\n".join(json.dumps(v, ensure_ascii=False) for v in new) + "\n").encode("utf-8"))
+                window_new += len(new)
+                cursor, search_id = data.get("cursor", 0), data.get("search_id")
+                write_run_json(run_id, "state.json", {"window": wi, "cursor": cursor, "search_id": search_id})
+                progress(successful=len(seen))
+                if not data.get("has_more"):
+                    break
+                time.sleep(TIKTOK_PAGE_DELAY)
+            if final_status == "cancelled":
+                break
+            _tiktok_log(run_id, f"Window {w_start}–{w_end}: {window_new:,} new videos.")
+            wi += 1
+            cursor, search_id = 0, None
+            write_run_json(run_id, "state.json", {"window": wi, "cursor": 0, "search_id": None})
+            done_now = wi - start_window
+            eta = (time.time() - t0) / done_now * (len(windows) - wi) if done_now > 0 else None
+            progress(processed=wi, eta_seconds=eta)
+    except TikTokQuotaExceeded as e:
+        final_status, error_message = "paused", str(e)
+        _tiktok_log(run_id, f"Paused: {e}")
+    except TikTokAPIError as e:
+        # Credentials rejected (token request refused, or a 401 that a fresh
+        # token did not fix): keep the run resumable instead of ending it.
+        if getattr(e, "status", None) == 401 or str(e).startswith(("Could not obtain an access token", "Could not reach TikTok", "Authentication failed")):
+            final_status = "paused"
+            error_message = f"Paused — credentials rejected ({e}). Check your client key and secret, then resume."
+        else:
+            final_status, error_message = "error", str(e)
+        _tiktok_log(run_id, error_message)
+    except Exception as e:  # never leave a run stuck in "running"
+        final_status, error_message = "error", f"{type(e).__name__}: {e}"
+        _tiktok_log(run_id, f"Unexpected error: {error_message}")
+    finally:
+        heartbeat_stop.set()
+        try:
+            if final_status == "completed":
+                _tiktok_log(run_id, "Extraction completed.")
+            elif final_status == "cancelled":
+                _tiktok_log(run_id, "Extraction cancelled by the user.")
+            progress(current="Building the corpus…")
+            try:
+                stats, n_videos = tiktok_finalize_outputs(run_id, status_label=final_status)
+                extra = dict(successful=stats["saved"], errors=stats["failed"],
+                             duplicate_count=stats["duplicates"], videos_fetched=n_videos,
+                             current=f"{n_videos:,} videos fetched")
+            except Exception as e:
+                extra = {}
+                final_status = "error"
+                error_message = (error_message + " · " if error_message else "") + f"Corpus building failed: {type(e).__name__}: {e}"
+            # Status flips last, only once every output file exists.
+            update_run(run_id, status=final_status, error_message=error_message,
+                       cancel_requested=False, eta_seconds=None, **extra)
+        finally:
+            with EXTRACTION_JOBS_LOCK:
+                job = EXTRACTION_JOBS.get(run_id)
+                if job is not None:
+                    job["status"] = final_status
+
+
+TIKTOK_HEARTBEAT_SECONDS = 10
+TIKTOK_STALE_AFTER_SECONDS = 90
+
+
+def _tiktok_heartbeat(run_id):
+    write_run_file(run_id, "heartbeat", str(time.time()).encode("ascii"))
+
+
+def _tiktok_seconds_since_heartbeat(run_id):
+    raw = read_run_file(run_id, "heartbeat")
+    try:
+        return time.time() - float(raw.decode("ascii"))
+    except Exception:
+        return None
+
+
+def tiktok_start_worker(run_id, client_key, client_secret):
+    _tiktok_heartbeat(run_id)
+    cancel_event = threading.Event()
+    with EXTRACTION_JOBS_LOCK:
+        EXTRACTION_JOBS[run_id] = {"status": "running", "cancel_event": cancel_event,
+                                   "processed": (read_run_meta(run_id) or {}).get("processed", 0),
+                                   "total": (read_run_meta(run_id) or {}).get("total", 0), "current": "Starting…"}
+    update_run(run_id, status="running", cancel_requested=False, error_message="")
+    t = threading.Thread(target=_tiktok_worker, args=(run_id, client_key, client_secret, cancel_event), daemon=True)
+    t.start()
+
+
+def tiktok_mark_orphans():
+    """A TikTok run marked active whose worker has stopped beating (e.g. the
+    container was restarted) becomes 'paused' so it can be resumed."""
+    for m in list_runs(pipeline="tiktok"):
+        if m.get("status") in _ACTIVE_RUN_STATUSES:
+            age = _tiktok_seconds_since_heartbeat(m.get("run_id"))
+            if age is None or age > TIKTOK_STALE_AFTER_SECONDS:
+                update_run(m["run_id"], status="paused",
+                           error_message="Interrupted (the app was restarted). Resume to continue.")
+
+
+def run_tiktok_app():
+    from datetime import date, timedelta
+
+    st.markdown(ACADEMIC_PAGE_CSS, unsafe_allow_html=True)
+    st.markdown("""
+    <style>
+    /* Multiselect chips (metadata variables): dark chip, white text. */
+    [data-baseweb="tag"] { background-color:#111111 !important; border-color:#111111 !important; }
+    [data-baseweb="tag"] *, [data-baseweb="tag"] span { color:#ffffff !important; -webkit-text-fill-color:#ffffff !important; fill:#ffffff !important; }
+    @keyframes iramuteq-live-pulse { 0% { opacity:1; } 50% { opacity:.35; } 100% { opacity:1; } }
+    .iramuteq-live-badge { display:inline-block; margin:.25rem 0 .25rem; padding:.2rem .6rem; border-radius:999px;
+        background:#dc2626; color:#fff !important; font-size:.72rem; font-weight:700; letter-spacing:.04em;
+        animation:iramuteq-live-pulse 1.4s ease-in-out infinite; }
+    .query-reading { border:1px solid #d9dee8; border-radius:10px; background:#ffffff; padding:.75rem 1rem; color:#111111; margin:.5rem 0 1rem; }
+
+    /* Input fields of the main area: white background, black text, visible border
+       (whatever the browser's light/dark preference). The sidebar keeps its dark style. */
+    section.main [data-baseweb="input"], section.main [data-baseweb="base-input"],
+    section.main [data-baseweb="textarea"], section.main [data-baseweb="input"] > div,
+    [data-testid="stMain"] [data-baseweb="input"], [data-testid="stMain"] [data-baseweb="base-input"],
+    [data-testid="stMain"] [data-baseweb="textarea"], [data-testid="stMain"] [data-baseweb="input"] > div,
+    [data-testid="stMain"] [data-testid="stMultiSelect"] [data-baseweb="select"] > div,
+    section.main [data-testid="stMultiSelect"] [data-baseweb="select"] > div {
+        background-color:#ffffff !important;
+        border-color:#9aa3b2 !important;
+    }
+    [data-testid="stMain"] input, [data-testid="stMain"] textarea,
+    section.main input, section.main textarea {
+        background-color:#ffffff !important;
+        color:#111111 !important;
+        -webkit-text-fill-color:#111111 !important;
+        caret-color:#111111 !important;
+    }
+    [data-testid="stMain"] input::placeholder, [data-testid="stMain"] textarea::placeholder,
+    section.main input::placeholder, section.main textarea::placeholder {
+        color:#8a919c !important;
+        -webkit-text-fill-color:#8a919c !important;
+    }
+    /* Date picker calendar (rendered in a popover outside the main area):
+       white background, black text; selected days dark with white text. */
+    [data-baseweb="popover"] [data-baseweb="calendar"],
+    [data-baseweb="popover"] [data-baseweb="calendar"] > div,
+    [data-baseweb="popover"] [data-baseweb="calendar"] [role="grid"],
+    [data-baseweb="popover"] [data-baseweb="calendar"] [role="row"],
+    [data-baseweb="popover"] [data-baseweb="calendar"] [role="gridcell"],
+    [data-baseweb="popover"] [data-baseweb="calendar"] button {
+        background-color:#ffffff !important;
+        color:#111111 !important;
+        -webkit-text-fill-color:#111111 !important;
+    }
+    [data-baseweb="popover"] [data-baseweb="calendar"] *,
+    [data-baseweb="popover"] [data-baseweb="calendar"] svg {
+        color:#111111 !important;
+        -webkit-text-fill-color:#111111 !important;
+        fill:#111111 !important;
+    }
+    [data-baseweb="popover"] [data-baseweb="calendar"] [aria-selected="true"],
+    [data-baseweb="popover"] [data-baseweb="calendar"] [aria-selected="true"] *,
+    [data-baseweb="popover"] [data-baseweb="calendar"] [aria-selected="true"]::after {
+        background-color:#111111 !important;
+        color:#ffffff !important;
+        -webkit-text-fill-color:#ffffff !important;
+        border-color:#111111 !important;
+    }
+    [data-baseweb="popover"] [data-baseweb="calendar"] [role="gridcell"]:hover,
+    [data-baseweb="popover"] [data-baseweb="calendar"] [role="gridcell"]:hover * {
+        background-color:#e5e7eb !important;
+    }
+    /* Month / year dropdowns inside the calendar */
+    [data-baseweb="popover"] [data-baseweb="calendar"] [data-baseweb="select"] > div {
+        background-color:#ffffff !important; border-color:#9aa3b2 !important;
+    }
+    /* Drop-down lists on this page (calendar month/year, variables selector):
+       white, like the fields they belong to. */
+    [data-baseweb="popover"] ul[role="listbox"],
+    [data-baseweb="popover"] [role="option"],
+    [data-baseweb="popover"] [role="option"] * {
+        background-color:#ffffff !important; color:#111111 !important; -webkit-text-fill-color:#111111 !important;
+    }
+    [data-baseweb="popover"] [role="option"]:hover,
+    [data-baseweb="popover"] [role="option"][aria-selected="true"] {
+        background-color:#e5e7eb !important;
+    }
+
+    /* +/- of number fields and the eye of password fields */
+    [data-testid="stMain"] [data-testid="stNumberInput"] button,
+    [data-testid="stMain"] [data-baseweb="input"] button {
+        background-color:#f2f4f7 !important;
+        color:#111111 !important;
+    }
+    [data-testid="stMain"] [data-testid="stNumberInput"] button *,
+    [data-testid="stMain"] [data-baseweb="input"] button * {
+        color:#111111 !important; fill:#111111 !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    def go_to_manager():
+        st.session_state["toolkit_input_source"] = "Extractions manager"
+        st.session_state["scroll_to_top_once"] = True
+        st.rerun()
+
+    st.markdown('<div class="research-kicker">Open research utility · corpus preparation</div>', unsafe_allow_html=True)
+    st.markdown('<h1 class="research-title">TikTok Research API → IRaMuTeQ</h1>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="research-subtitle">Query TikTok videos with your own Research API credentials and turn '
+        'their descriptions and/or speech transcripts into an IRaMuTeQ corpus, with date, region, text-type '
+        'and engagement metadata.</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="citation-box"><strong>Requirements.</strong> An approved TikTok Research API project. '
+        'Your client key and secret are kept only in this browser session and in memory while the extraction runs — '
+        'they are never saved to disk or written to any log. Data obtained through the Research API remains subject to '
+        "TikTok's Research API terms (use within your approved project, retention and refresh rules).</div>",
+        unsafe_allow_html=True)
+
+    steps = [
+        ("01", "Authenticate", "Enter the client key and secret of your approved research project."),
+        ("02", "Query", "Keywords, hashtags (AND / OR), accounts, regions, dates."),
+        ("03", "Collect", "30-day windows, paginated; pauses on quota and resumes later."),
+        ("04", "Export", "Corpus, raw CSV, failure log and a summary for your methods section."),
+    ]
+    for col, (num, heading, description) in zip(st.columns(4), steps):
+        with col:
+            st.markdown(f'<div class="method-card"><div class="method-number">{num}</div>'
+                        f'<div class="method-heading">{heading}</div>'
+                        f'<div class="method-text">{description}</div></div>', unsafe_allow_html=True)
+
+    with st.sidebar:
+        with st.expander("About", expanded=False):
+            st.markdown(
+                "**TikTok Research API → IRaMuTeQ**\n\n"
+                "Collects public TikTok videos through the official Research API "
+                "(`/v2/research/video/query/`) with the user's own credentials, and builds an "
+                "IRaMuTeQ corpus from their descriptions and/or transcripts.")
+        with st.expander("Parameters", expanded=False):
+            st.markdown(
+                f"- Date windows: ≤ {TIKTOK_WINDOW_DAYS} days\n"
+                f"- Page size: {TIKTOK_PAGE_SIZE} videos\n"
+                f"- Delay between pages: {TIKTOK_PAGE_DELAY:g} s\n"
+                f"- Fields: {', '.join(TIKTOK_FIELDS)}")
+        with st.expander("low / medium / high", expanded=False):
+            st.markdown(TIKTOK_ENGAGEMENT_EXPLANATION)
+
+    tiktok_mark_orphans()
+
+    # ---------- an extraction is running: lock the page (as MediaCloud does) ----------
+    # Only this banner is shown while a TikTok run is active; it polls every
+    # 2 s and, once the run ends, reruns the whole app so the form reappears.
+    if any(m.get("status") in _ACTIVE_RUN_STATUSES for m in list_runs(pipeline="tiktok")):
+        @st.fragment(run_every="2s")
+        def _active_run_banner():
+            tiktok_mark_orphans()
+            live = [m for m in list_runs(pipeline="tiktok") if m.get("status") in _ACTIVE_RUN_STATUSES]
+            if not live:
+                st.rerun(scope="app")
+                return
+            run = live[0]
+            st.markdown('<div class="iramuteq-live-badge">● Extraction running</div>', unsafe_allow_html=True)
+            st.markdown("### 🔴 TikTok extraction still running")
+            total = max(int(run.get("total") or 0), 1)
+            done = min(int(run.get("processed") or 0), total)
+            eta = run.get("eta_seconds")
+            eta_text = f" · ~{format_eta(eta)} remaining" if eta is not None else ""
+            st.progress(done / total, text=f"Date windows {done:,} / {total:,}{eta_text} · {run.get('current') or 'Processing…'}")
+            st.info("Your extraction did not disappear. It is running in the background and its progress is stored "
+                    "persistently. Open **Extractions manager** to follow it, cancel it, or download the result when it "
+                    "finishes. A new TikTok extraction can be launched once this one has ended.")
+            if st.button("📂 Open Extractions manager", key="open_recent_from_active_tiktok", use_container_width=True):
+                st.session_state["toolkit_input_source"] = "Extractions manager"
+                st.session_state["scroll_to_top_once"] = True
+                st.rerun(scope="app")
+        _active_run_banner()
+        return
+
+    # ---------- 1. credentials ----------
+    st.markdown('<div class="section-title">1 · Your Research API credentials</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-note">On <a href="https://developers.tiktok.com/research/" target="_blank">developers.tiktok.com/research</a> → your project → Client key / Client secret (click the eye icon to display them).</div>', unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        client_key = st.text_input("Client key", type="password", key="tt_client_key").strip()
+    with c2:
+        client_secret = st.text_input("Client secret", type="password", key="tt_client_secret").strip()
+    if st.button("Test credentials", disabled=not (client_key and client_secret)):
+        try:
+            tiktok_get_token(client_key, client_secret)
+            st.success("Credentials accepted — an access token was obtained.")
+        except TikTokAPIError as e:
+            st.error(str(e))
+
+    # ---------- paused runs ----------
+    paused = [m for m in list_runs(pipeline="tiktok") if m.get("status") == "paused"]
+    if paused:
+        st.markdown('<div class="section-title">Paused extractions</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-note">These stopped early (daily quota reached or app restarted). Enter your credentials above, then resume: collection continues from the last saved page.</div>', unsafe_allow_html=True)
+        for m in paused:
+            rid = m["run_id"]
+            with st.container(border=True):
+                st.markdown(f"**{m.get('label', rid)}** · {int(m.get('processed') or 0)} / {int(m.get('total') or 0)} date windows · "
+                            f"{int(m.get('videos_fetched') or 0):,} videos so far")
+                if m.get("error_message"):
+                    st.caption(m["error_message"])
+                if st.button("▶ Resume", key=f"tt_resume_{rid}", disabled=not (client_key and client_secret)):
+                    try:
+                        tiktok_get_token(client_key, client_secret)
+                    except TikTokAPIError as e:
+                        # The run stays paused: nothing is lost, the user can retry.
+                        st.error(f"Not resumed — {e} Check your client key and secret, then try again.")
+                    else:
+                        tiktok_start_worker(rid, client_key, client_secret)
+                        go_to_manager()
+
+    # ---------- 2. query ----------
+    st.markdown('<div class="section-title">2 · What to collect</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-note">Enter one term per line. TikTok matches keywords approximately (in descriptions and hashtags), so check the results.</div>', unsafe_allow_html=True)
+    mode_labels = {"any": "ANY of them (OR)", "all": "ALL of them (AND)"}
+    q1, q2 = st.columns(2)
+    with q1:
+        kw_text = st.text_area("Keywords", key="tt_keywords", height=110, placeholder="intelligence artificielle\nChatGPT")
+        keyword_mode = st.radio("Videos must contain…", ["any", "all"], format_func=mode_labels.get,
+                                horizontal=True, key="tt_kw_mode")
+    with q2:
+        tags_text = st.text_area("Hashtags (without #)", key="tt_hashtags", height=110, placeholder="ia\nchatgpt")
+        hashtag_mode = st.radio("Videos must carry…", ["any", "all"], format_func=mode_labels.get,
+                                horizontal=True, key="tt_ht_mode")
+    combine = st.radio("Combine the keyword group and the hashtag group with",
+                       ["or", "and"], format_func={"or": "OR — either group is enough", "and": "AND — both groups must match"}.get,
+                       horizontal=True, key="tt_combine")
+    q3, q4 = st.columns(2)
+    with q3:
+        users_text = st.text_area("Restrict to accounts (usernames — optional, any of them)", key="tt_users", height=80)
+    with q4:
+        excl_text = st.text_area("Exclude keywords (optional, none of them)", key="tt_exclude", height=80)
+    regions_text = st.text_input("Restrict to region codes (comma-separated ISO codes, e.g. FR, GR, BE — optional, any of them)", key="tt_regions")
+    d1, d2, d3 = st.columns(3)
+    today = date.today()
+    with d1:
+        start_date = st.date_input("From date", value=today - timedelta(days=30), min_value=date(2018, 1, 1), max_value=today, key="tt_start")
+    with d2:
+        end_date = st.date_input("To date (inclusive)", value=today - timedelta(days=1), min_value=date(2018, 1, 1), max_value=today, key="tt_end")
+    with d3:
+        max_videos = st.number_input("Maximum number of videos (0 = no limit)", min_value=0, value=10000, step=1000, key="tt_max",
+                                     help="Protects your daily quota (about 1,000 requests of up to 100 videos each — check your project's current limits).")
+
+    keywords, hashtags = _split_terms(kw_text), _split_terms(tags_text)
+    usernames, excluded = _split_terms(users_text), _split_terms(excl_text)
+    regions = [r.upper() for r in _split_terms(regions_text)]
+    query, query_problem = tiktok_build_query(keywords, hashtags, usernames, regions, excluded,
+                                              keyword_mode, hashtag_mode, combine)
+    reading = tiktok_describe_query(keywords, hashtags, usernames, regions, excluded, keyword_mode, hashtag_mode, combine)
+
+    with st.expander("Advanced: edit the raw API query (JSON)"):
+        st.caption("Leave empty to use the query built from the fields above. TikTok's syntax: every `and` "
+                   "condition must hold, at least one `or` condition must hold, no `not` condition may hold.")
+        raw_query = st.text_area("Raw query", key="tt_raw_query", height=160, placeholder=json.dumps(query, ensure_ascii=False, indent=2))
+        if raw_query.strip():
+            try:
+                query, query_problem, reading = json.loads(raw_query), None, "Custom JSON query (see below)."
+            except ValueError as e:
+                st.error(f"Invalid JSON: {e}")
+                query = {}
+        st.json(query)
+    if query_problem:
+        st.error(query_problem)
+    elif reading:
+        st.markdown(f'<div class="query-reading"><strong>Your query reads:</strong> {reading}.</div>', unsafe_allow_html=True)
+
+    # ---------- 3. corpus ----------
+    st.markdown('<div class="section-title">3 · Corpus options</div>', unsafe_allow_html=True)
+    text_source = st.radio(
+        "Text of each corpus entry",
+        options=["description", "transcript", "both"],
+        format_func={"description": "Video description (caption)",
+                     "transcript": "Speech transcript (voice_to_text, when TikTok provides one)",
+                     "both": "Description + transcript"}.get,
+        horizontal=True, key="tt_text_source")
+    metadata = st.multiselect("IRaMuTeQ metadata variables", options=list(TIKTOK_METADATA_CHOICES),
+                              default=TIKTOK_DEFAULT_METADATA, format_func=TIKTOK_METADATA_CHOICES.get, key="tt_meta")
+    if "texttype" in metadata:
+        st.caption("*texttype* records what each entry actually contains. With “Description + transcript”, "
+                   "a video that has only one of the two gets *description* or *transcript*, so you can tell them apart in IRaMuTeQ.")
+    if any(m in metadata for m in ("views", "likes", "comments", "shares")):
+        st.info(TIKTOK_ENGAGEMENT_EXPLANATION)
+    o1, o2 = st.columns(2)
+    with o1:
+        lowercase = st.checkbox("Convert text to lowercase", value=True, key="tt_lower")
+        remove_urls = st.checkbox("Remove URLs", value=True, key="tt_urls")
+        strip_tags = st.checkbox("Strip # and @ symbols (keep the word)", value=True, key="tt_tags")
+    with o2:
+        remove_emojis = st.checkbox("Remove emojis", value=True, key="tt_emojis",
+                                    help="Emojis otherwise become separate 'words' in IRaMuTeQ.")
+        dedupe = st.checkbox("Skip videos whose text is identical to an earlier one", value=True, key="tt_dedupe")
+        min_length = st.number_input("Minimum text length (characters)", min_value=0, value=20, step=10, key="tt_minlen")
+
+    corpus_options = {"text_source": text_source, "metadata": metadata, "lowercase": lowercase,
+                      "remove_urls": remove_urls, "strip_tags": strip_tags, "remove_emojis": remove_emojis,
+                      "dedupe_text": dedupe, "min_length": int(min_length)}
+    example = {"date": "*date_2026-09-14", "year": "*year_2026", "month": "*month_202609", "region": "*region_fr",
+               "user": "*user_example", "views": "*views_high", "likes": "*likes_medium",
+               "comments": "*comments_low", "shares": "*shares_low", "videoid": "*videoid_7412345678901234567",
+               "texttype": "*texttype_" + ("both" if text_source == "both" else text_source)}
+    st.markdown("**Header preview:**")
+    st.code(" ".join(["****"] + [example[m] for m in metadata]), language=None)
+
+    # ---------- 4. launch ----------
+    st.markdown('<div class="section-title">4 · Run</div>', unsafe_allow_html=True)
+    problems = []
+    if not (client_key and client_secret):
+        problems.append("Enter your client key and secret.")
+    if query_problem:
+        problems.append("Fix the query logic above.")
+    elif not query:
+        problems.append("Give at least one keyword, hashtag, account or region.")
+    if start_date > end_date:
+        problems.append("The start date is after the end date.")
+    windows = tiktok_date_windows(start_date, end_date) if start_date <= end_date else []
+    if windows:
+        st.caption(f"{len(windows)} date window(s) of up to {TIKTOK_WINDOW_DAYS} days will be queried, each paginated by {TIKTOK_PAGE_SIZE} videos.")
+    label = st.text_input("Name for this extraction", value=f"TikTok · {', '.join((keywords + hashtags + usernames)[:3]) or 'query'} · "
+                                                            f"{start_date:%Y-%m-%d}→{end_date:%Y-%m-%d}", key="tt_label")
+    for p in problems:
+        st.warning(p)
+    if st.button("Launch extraction", type="primary", disabled=bool(problems), key="tt_launch"):
+        try:
+            tiktok_get_token(client_key, client_secret)
+        except TikTokAPIError as e:
+            st.error(str(e))
+            return
+        run_id = create_run("tiktok", label, total=len(windows), extra={"status": "starting", "videos_fetched": 0})
+        write_run_json(run_id, "params.json", {
+            "query": query, "query_reading": reading, "start_date": start_date.strftime("%Y%m%d"),
+            "end_date": end_date.strftime("%Y%m%d"), "windows": windows, "max_videos": int(max_videos),
+            "corpus_options": corpus_options,
+        })
+        write_run_json(run_id, "state.json", {"window": 0, "cursor": 0, "search_id": None})
+        _tiktok_log(run_id, f"Extraction started: {len(windows)} window(s), query {json.dumps(query, ensure_ascii=False)}")
+        tiktok_start_worker(run_id, client_key, client_secret)
+        go_to_manager()
+
+    st.markdown('<div class="footer-line">TikTok Research API → IRaMuTeQ · corpus preparation interface</div>', unsafe_allow_html=True)
+
+
+# ============================================================
 # ENTRY POINT: a single landing page where the input source is
 # chosen once, before proceeding into the matching pipeline.
 # ============================================================
@@ -3775,9 +4772,14 @@ INPUT_SOURCES = {
         "label": "MediaCloud",
         "description": "Upload a MediaCloud CSV export. Article text is fetched from each URL and cleaned automatically, with National/Regional press classification and publication statistics.",
     },
+    "TikTok Research API": {
+        "label": "TikTok",
+        "description": "Use your own TikTok Research API credentials to search videos by keyword, hashtag, account, region and date, and build a corpus from their descriptions and/or transcripts.",
+    },
 }
 
-_PIPELINE_LABELS = {"crowdtangle": "Meta Content Library", "csv": "Any CSV", "mediacloud": "MediaCloud"}
+_PIPELINE_LABELS = {"crowdtangle": "Meta Content Library", "csv": "Any CSV", "mediacloud": "MediaCloud", "tiktok": "TikTok"}
+_BACKGROUND_PIPELINES = ("mediacloud", "tiktok")
 _ACTIVE_RUN_STATUSES = {"starting", "running", "cancelling"}
 
 
@@ -3789,13 +4791,13 @@ def render_recent_extractions():
     # "Launch extraction" button) instead of the top of this one.
     _scroll_to_top_pending = st.session_state.pop("scroll_to_top_once", False)
     st.markdown('<h2 style="font-family:Georgia,\'Times New Roman\',serif;">Extractions manager</h2>', unsafe_allow_html=True)
-    st.caption("Every corpus you've built (Meta Content Library, Any CSV, or MediaCloud) is kept here — even after closing the tab — until you delete it.")
+    st.caption("Every corpus you've built (Meta Content Library, Any CSV, MediaCloud, or TikTok) is kept here — even after closing the tab — until you delete it.")
 
     @st.fragment(run_every="1s")
     def _recent_content():
         with EXTRACTION_JOBS_LOCK:
             _active_job_ids = [jid for jid, j in EXTRACTION_JOBS.items() if j.get("status") in _ACTIVE_RUN_STATUSES]
-        _active_persistent_runs = [m for m in list_runs(pipeline="mediacloud") if m.get("status") in _ACTIVE_RUN_STATUSES]
+        _active_persistent_runs = [m for m in list_runs() if m.get("pipeline") in _BACKGROUND_PIPELINES and m.get("status") in _ACTIVE_RUN_STATUSES]
         _live_run_id = _active_persistent_runs[0].get("run_id") if _active_persistent_runs else (_active_job_ids[0] if _active_job_ids else None)
 
         if _live_run_id:
@@ -3827,7 +4829,7 @@ def render_recent_extractions():
                         st.session_state[confirm_key] = True
                         st.rerun(scope="fragment")
                 else:
-                    st.warning("Cancel this extraction? Progress made so far will still be saved and downloadable, but the rest of the CSV won't be processed.")
+                    st.warning("Cancel this extraction? Progress made so far will still be saved and downloadable, but the rest won't be processed.")
                     rc1, rc2 = st.columns(2)
                     with rc1:
                         if st.button("Yes, cancel", type="primary", use_container_width=True, key=f"recent_cancel_confirm_{_live_run_id}"):
@@ -3847,7 +4849,7 @@ def render_recent_extractions():
 
         runs = list_runs()
         if not runs:
-            st.info("No extractions yet. Build a corpus from any of the three input sources and it will show up here.")
+            st.info("No extractions yet. Build a corpus from any of the input sources and it will show up here.")
             return
 
         for meta in runs:
@@ -3859,6 +4861,7 @@ def render_recent_extractions():
             status_badge = {
                 "completed": "✅ Completed", "cancelled": "⏹ Cancelled", "error": "❌ Error",
                 "starting": "🔴 Running", "running": "🔴 Running", "cancelling": "🟠 Cancelling…",
+                "paused": "⏸ Paused — resume it from the TikTok page",
             }.get(status, status)
 
             with st.container(border=True):
@@ -3908,10 +4911,14 @@ def render_recent_extractions():
                     if meta.get("pipeline") == "mediacloud":
                         m[3].metric("National press", f"{meta.get('national_count', 0):,}")
                         m[4].metric("Regional press", f"{meta.get('regional_count', 0):,}")
+                    if meta.get("pipeline") == "tiktok":
+                        m[3].metric("Videos fetched", f"{meta.get('videos_fetched', 0):,}")
+                        if meta.get("error_message"):
+                            st.caption(meta["error_message"])
 
                     corpus_bytes = read_run_file(run_id, "corpus.txt")
                     failed_bytes = read_run_file(run_id, "failed.txt")
-                    n_cols = 6 if meta.get("pipeline") == "mediacloud" else 2
+                    n_cols = {"mediacloud": 6, "tiktok": 4}.get(meta.get("pipeline"), 2)
                     dl = st.columns(n_cols)
                     with dl[0]:
                         if corpus_bytes:
@@ -3936,6 +4943,16 @@ def render_recent_extractions():
                         with dl[5]:
                             if summary_log_bytes:
                                 st.download_button("Summary log", data=summary_log_bytes, file_name=f"{run_id}_summary.txt", mime="text/plain", use_container_width=True, key=f"dl_summary_{run_id}")
+
+                    if meta.get("pipeline") == "tiktok":
+                        videos_csv_bytes = read_run_file(run_id, "videos.csv")
+                        tt_summary_bytes = read_run_file(run_id, "summary.txt")
+                        with dl[2]:
+                            if videos_csv_bytes:
+                                st.download_button("Raw data (CSV)", data=videos_csv_bytes, file_name=f"{run_id}_tiktok_videos.csv", mime="text/csv", use_container_width=True, key=f"dl_ttcsv_{run_id}")
+                        with dl[3]:
+                            if tt_summary_bytes:
+                                st.download_button("Summary log", data=tt_summary_bytes, file_name=f"{run_id}_summary.txt", mime="text/plain", use_container_width=True, key=f"dl_ttsum_{run_id}")
 
                     confirm_key = f"confirm_delete_{run_id}"
                     if not st.session_state.get(confirm_key):
@@ -3991,6 +5008,70 @@ def render_recent_extractions():
             </script>""",
             height=0,
         )
+
+APP_CREDIT = "Created by Panos Tsimpoukis, LERASS (UT) · PhEPoC-ST (NTUA)"
+APP_CITATION = (
+    "Tsimpoukis, P. (2026). IRaMuTeQ corpus construction toolkit [Computer software]. "
+    "LERASS, Université de Toulouse · PhEPoC-ST, NTUA. https://github.com/panagiotix/corpusiramuteq"
+)
+
+
+def render_credit_with_copy():
+    """Credit line fixed at the bottom-left of the landing page. Clicking the
+    text or the small button copies a ready-made citation of the tool.
+
+    Streamlit sanitises scripts in st.markdown, so the element is created by
+    a tiny zero-height component that injects it into the page itself (same
+    origin). It is hidden on every other page by CREDIT_HIDE_CSS."""
+    import streamlit.components.v1 as components
+    parent_code = """
+(function () {
+  if (document.getElementById("app-credit-copy")) { return; }
+  var CITATION = %s, CREDIT = %s;
+  var box = document.createElement("div");
+  box.id = "app-credit-copy";
+  box.style.cssText = "position:fixed;bottom:6px;left:10px;z-index:9999;display:flex;align-items:center;gap:.45rem;" +
+                      "font-size:.7rem;color:#fff;font-family:'Source Sans Pro',sans-serif;";
+  var txt = document.createElement("span");
+  txt.textContent = CREDIT;
+  txt.title = "Click to copy a citation of this tool";
+  txt.style.cssText = "opacity:.75;cursor:pointer;border-bottom:1px dotted rgba(255,255,255,.5);";
+  var btn = document.createElement("button");
+  btn.textContent = "\ud83d\udccb Copy citation";
+  btn.title = "Copy a citation of this tool";
+  btn.style.cssText = "background:#fff;color:#111;border:0;border-radius:5px;padding:1px 7px;font-size:.66rem;font-weight:600;cursor:pointer;";
+  function done(ok) {
+    btn.textContent = ok ? "\u2713 Copied" : "Copy failed";
+    setTimeout(function () { btn.textContent = "\ud83d\udccb Copy citation"; }, 1800);
+  }
+  function fallback() {
+    var ta = document.createElement("textarea");
+    ta.value = CITATION; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    var ok = false; try { ok = document.execCommand("copy"); } catch (e) {}
+    document.body.removeChild(ta); return ok;
+  }
+  function copy() {
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(CITATION).then(function () { done(true); }, function () { done(fallback()); });
+    } else { done(fallback()); }
+  }
+  txt.addEventListener("click", copy);
+  btn.addEventListener("click", copy);
+  box.appendChild(txt); box.appendChild(btn);
+  document.body.appendChild(box);
+})();
+""" % (json.dumps(APP_CITATION), json.dumps(APP_CREDIT))
+    components.html(
+        "<script>(function(){try{var d=window.parent.document;var s=d.createElement('script');"
+        f"s.textContent={json.dumps(parent_code)};d.body.appendChild(s);"
+        "var c=d.getElementById('app-credit-copy');if(c){c.style.display='flex';}}catch(e){}})();</script>",
+        height=0,
+    )
+
+
+CREDIT_HIDE_CSS = "<style>#app-credit-copy{display:none !important;}</style>"
+
 
 def main():
     st.set_page_config(
@@ -4049,25 +5130,26 @@ def main():
                 animation: iramuteq-live-pulse 1.4s ease-in-out infinite;
             }
             </style>
-            <div class="app-credit">Created by Panos Tsimpoukis, LERASS (UT) · PhEPoC-ST (NTUA)</div>
             """,
             unsafe_allow_html=True,
         )
         st.markdown('<div style="font-size:.78rem; letter-spacing:.14em; text-transform:uppercase; color:#fff; font-weight:700; margin-bottom:.5rem;">Open research utility · corpus preparation</div>', unsafe_allow_html=True)
         st.markdown('<h1 style="font-family:Georgia,\'Times New Roman\',serif; font-size:clamp(2.2rem,4vw,3.65rem); line-height:1.05; color:#fff; margin:0; font-weight:600;">IRaMuTeQ corpus construction</h1>', unsafe_allow_html=True)
         st.markdown(
-            '<div style="font-size:1.08rem; line-height:1.65; color:#fff; max-width:900px; margin-top:1rem;">Build a textual corpus for IRaMuTeQ from Meta Content Library exports (Facebook or Instagram), any CSV file, or a MediaCloud export. Choose your input source to get started.</div>',
+            '<div style="font-size:1.08rem; line-height:1.65; color:#fff; max-width:900px; margin-top:1rem;">Build a textual corpus for IRaMuTeQ from Meta Content Library exports (Facebook or Instagram), any CSV file, a MediaCloud export, or TikTok (Research API). Choose your input source to get started.</div>',
             unsafe_allow_html=True,
         )
         st.markdown('<div style="font-family:Georgia,\'Times New Roman\',serif; font-size:1.55rem; color:#fff; margin:2.2rem 0 1rem;">Choose your input source</div>', unsafe_allow_html=True)
 
+        tiktok_mark_orphans()
         mediacloud_running = any(m.get("status") in _ACTIVE_RUN_STATUSES for m in list_runs(pipeline="mediacloud"))
+        tiktok_running = any(m.get("status") in _ACTIVE_RUN_STATUSES for m in list_runs(pipeline="tiktok"))
 
-        cols = st.columns(3)
+        cols = st.columns(len(INPUT_SOURCES))
         for col, key in zip(cols, INPUT_SOURCES):
             info = INPUT_SOURCES[key]
             with col:
-                live_badge = '<div class="iramuteq-live-badge">● Extraction running</div>' if (key == "MediaCloud" and mediacloud_running) else ""
+                live_badge = '<div class="iramuteq-live-badge">● Extraction running</div>' if ((key == "MediaCloud" and mediacloud_running) or (key == "TikTok Research API" and tiktok_running)) else ""
                 st.markdown(
                     f'<div style="border:1px solid #d9dee8; border-radius:12px; padding:1.1rem 1.2rem; background:#fff; min-height:150px;">'
                     f'<div style="font-weight:700; color:#111; margin-bottom:.4rem;">{info["label"]}</div>'
@@ -4084,10 +5166,12 @@ def main():
         if st.button("📂 Extractions manager", use_container_width=False):
             st.session_state["toolkit_input_source"] = "Extractions manager"
             st.rerun()
+        render_credit_with_copy()
         return
 
     # ---- Proceed into the matching pipeline ----
     chosen = st.session_state["toolkit_input_source"]
+    st.markdown(CREDIT_HIDE_CSS, unsafe_allow_html=True)  # the credit belongs to the landing page only
     with st.sidebar:
         st.markdown(f"**Input source:** {chosen}")
         if st.button("← Change input source", use_container_width=True):
@@ -4099,6 +5183,8 @@ def main():
         run_corpus_builder_app(forced_source_mode=chosen)
     elif chosen == "Extractions manager":
         render_recent_extractions()
+    elif chosen == "TikTok Research API":
+        run_tiktok_app()
     else:
         run_mediacloud_app()
 
