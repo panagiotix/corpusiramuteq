@@ -37,7 +37,7 @@ import streamlit as st
 # MAJOR.MINOR.PATCH: PATCH = bug fixes, MINOR = new features,
 # MAJOR = changes that break existing habits or file formats.
 # ============================================================
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 
 # ============================================================
 # Shared state that MUST persist across Streamlit reruns
@@ -5082,7 +5082,198 @@ def render_credit_with_copy():
     )
 
 
-CREDIT_HIDE_CSS = "<style>#app-credit-copy{display:none !important;}</style>"
+# The credit and the update notice belong to the landing page only.
+CREDIT_HIDE_CSS = "<style>#app-credit-copy, #app-update-notice{display:none !important;}</style>"
+
+
+# ============================================================
+# Update notice (landing page, bottom-right). Asks GitHub for the latest
+# release; shown only for a newer FEATURE version (first or second number
+# higher, e.g. 1.1.x -> 1.2.0). Fix-only releases (1.1.1) show nothing.
+# ============================================================
+GITHUB_REPO = "panagiotix/corpusiramuteq"
+UPDATE_CHECK_TTL_SECONDS = 6 * 3600   # GitHub allows 60 anonymous requests/hour per IP
+UPDATE_GIT_COMMANDS = (
+    "git pull\n"
+    "docker stop iramuteq-toolkit\n"
+    "docker rm iramuteq-toolkit\n"
+    "docker build -t iramuteq-toolkit .\n"
+    "docker run -d --name iramuteq-toolkit -p 8501:8501 \\\n"
+    "  -v ~/iramuteq-data:/app/data \\\n"
+    "  --restart unless-stopped iramuteq-toolkit"
+)
+
+
+def parse_version(text):
+    """'v1.2.0' / '1.2' -> (1, 2, 0); None if it isn't a version."""
+    m = re.match(r"^\s*v?(\d+)(?:\.(\d+))?(?:\.(\d+))?", str(text or ""))
+    if not m:
+        return None
+    return tuple(int(g or 0) for g in m.groups())
+
+
+def is_newer_feature_version(latest, current=APP_VERSION):
+    lv, cv = parse_version(latest), parse_version(current)
+    return bool(lv and cv and lv[:2] > cv[:2])
+
+
+def release_highlights(body, limit=4):
+    """First bullet points of a release description, as plain text."""
+    items = []
+    for line in (body or "").splitlines():
+        m = re.match(r"^\s*[-*]\s+(.*\S)", line)
+        if not m:
+            continue
+        text = m.group(1)
+        text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text)      # [label](url) -> label
+        text = re.sub(r"\*\*|__|`", "", text).strip()               # bold / code marks, keep *var_ names
+        text = re.split(r"(?<=[.!?])\s", text)[0]                 # first sentence only
+        if text:
+            items.append(text if len(text) <= 90 else text[:87].rstrip() + "…")
+        if len(items) >= limit:
+            break
+    return items
+
+
+@st.cache_data(ttl=UPDATE_CHECK_TTL_SECONDS, show_spinner=False)
+def fetch_latest_release():
+    """Latest GitHub release, or None (offline, no release yet, API error)."""
+    import requests
+    try:
+        r = requests.get(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
+                         headers={"Accept": "application/vnd.github+json"}, timeout=4)
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        return {"tag": data.get("tag_name") or "", "name": data.get("name") or "",
+                "published_at": data.get("published_at") or "", "body": data.get("body") or "",
+                "url": data.get("html_url") or f"https://github.com/{GITHUB_REPO}/releases"}
+    except Exception:
+        return None
+
+
+def render_update_notice():
+    """Inject the notice into the page (like the credit line) when a newer
+    feature version exists. Dismissal is remembered per version in the
+    browser (localStorage), so it reappears only for the next one."""
+    release = fetch_latest_release()
+    if not release or not is_newer_feature_version(release["tag"]):
+        return
+    import streamlit.components.v1 as components
+    latest = ".".join(str(n) for n in parse_version(release["tag"]))
+    released = ""
+    try:
+        d = datetime.strptime(release["published_at"][:10], "%Y-%m-%d")
+        released = f"released {d.day} {d.strftime('%B')} {d.year}"
+    except Exception:
+        pass
+    data = {
+        "latest": latest, "current": APP_VERSION, "released": released,
+        "highlights": release_highlights(release["body"]), "url": release["url"],
+        "commands": UPDATE_GIT_COMMANDS, "repo": f"https://github.com/{GITHUB_REPO}",
+    }
+    parent_code = """
+(function () {
+  var D = %s;
+  var KEY = "iramuteq-dismissed-update";
+  var old = document.getElementById("app-update-notice");
+  if (old && old.getAttribute("data-version") === D.latest) { old.style.display = ""; return; }
+  if (old) { old.remove(); }
+  try { if (localStorage.getItem(KEY) === D.latest) { return; } } catch (e) {}
+
+  function el(tag, css, text) {
+    var e = document.createElement(tag);
+    if (css) { e.style.cssText = css; }
+    if (text !== undefined) { e.textContent = text; }
+    return e;
+  }
+  var BTN = "border-radius:6px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer;line-height:1.3;";
+  var DARK = BTN + "background:#111;color:#fff;-webkit-text-fill-color:#fff;border:1px solid #111;";
+  var LIGHT = BTN + "background:#fff;color:#111;-webkit-text-fill-color:#111;border:1px solid #9aa3b2;";
+  var CODE = "background:#f2f4f7;border-radius:6px;padding:7px 9px;font-family:ui-monospace,Menlo,Consolas,monospace;" +
+             "font-size:11px;color:#111;white-space:pre-wrap;word-break:break-all;margin:4px 0;";
+
+  var box = el("div", "position:fixed;right:16px;bottom:12px;z-index:9999;width:340px;max-height:75vh;overflow-y:auto;" +
+               "background:#fff;color:#111;border-radius:10px;padding:12px 14px;box-sizing:border-box;" +
+               "font-family:'Source Sans Pro',sans-serif;font-size:13px;line-height:1.45;border:1px solid #d9dee8;");
+  box.id = "app-update-notice";
+  box.setAttribute("data-version", D.latest);
+
+  var head = el("div", "display:flex;justify-content:space-between;align-items:flex-start;gap:8px;");
+  head.appendChild(el("div", "font-size:15px;font-weight:600;color:#111;", "\\ud83d\\udd14 Version " + D.latest + " is available"));
+  var close = el("button", "background:transparent;border:0;color:#555;font-size:18px;line-height:1;cursor:pointer;padding:0;", "\\u00d7");
+  close.title = "Dismiss — shown again for the next version";
+  close.setAttribute("aria-label", "Dismiss");
+  head.appendChild(close);
+  box.appendChild(head);
+  box.appendChild(el("div", "font-size:12px;color:#555;margin:1px 0 6px;", "You have " + D.current + (D.released ? " \\u00b7 " + D.released : "")));
+
+  if (D.highlights.length) {
+    box.appendChild(el("div", "font-size:12px;color:#111;", "New:"));
+    var ul = el("ul", "margin:2px 0 8px 18px;padding:0;font-size:12px;color:#111;");
+    D.highlights.forEach(function (h) { ul.appendChild(el("li", "", h)); });
+    box.appendChild(ul);
+  }
+
+  var row = el("div", "display:flex;gap:6px;flex-wrap:wrap;");
+  var how = el("button", DARK, "How to update");
+  var notes = el("button", LIGHT, "Full release notes \\u2197");
+  row.appendChild(how); row.appendChild(notes);
+  box.appendChild(row);
+
+  var steps = el("div", "display:none;margin-top:10px;font-size:12px;color:#111;");
+  steps.appendChild(el("div", "color:#555;margin-bottom:6px;",
+    "Wait until no extraction is running. Your past extractions are kept."));
+  steps.appendChild(el("div", "font-weight:600;", "If you installed with Git"));
+  steps.appendChild(el("div", "", "In a terminal, inside your project folder (e.g. corpusiramuteq), run:"));
+  steps.appendChild(el("div", CODE, D.commands));
+  var copy = el("button", LIGHT, "Copy commands");
+  steps.appendChild(copy);
+  steps.appendChild(el("div", "color:#555;margin-top:4px;", "Drop the -v line if you didn't use it originally."));
+  steps.appendChild(el("div", "font-weight:600;margin-top:10px;", "If you downloaded the ZIP"));
+  var zip = el("div", "");
+  zip.appendChild(document.createTextNode("Download the ZIP again from "));
+  var a = el("a", "color:#111;text-decoration:underline;", "the GitHub page");
+  a.href = D.repo; a.target = "_blank"; a.rel = "noopener";
+  zip.appendChild(a);
+  zip.appendChild(document.createTextNode(", extract it over (or alongside) the old folder, then run the same commands from inside it, without the first line (git pull)."));
+  steps.appendChild(zip);
+  steps.appendChild(el("div", "color:#555;margin-top:6px;", "Full guide: DOCKER.md, Part 5."));
+  box.appendChild(steps);
+
+  how.addEventListener("click", function () {
+    var open = steps.style.display === "none";
+    steps.style.display = open ? "block" : "none";
+    how.textContent = open ? "Hide steps" : "How to update";
+  });
+  notes.addEventListener("click", function () { window.open(D.url, "_blank", "noopener"); });
+  close.addEventListener("click", function () {
+    try { localStorage.setItem(KEY, D.latest); } catch (e) {}
+    box.remove();
+  });
+  function copied(ok) {
+    copy.textContent = ok ? "\\u2713 Copied" : "Copy failed";
+    setTimeout(function () { copy.textContent = "Copy commands"; }, 1800);
+  }
+  copy.addEventListener("click", function () {
+    var text = D.commands;
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(function () { copied(true); }, function () { copied(false); });
+    } else {
+      var ta = document.createElement("textarea"); ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select();
+      var ok = false; try { ok = document.execCommand("copy"); } catch (e) {}
+      document.body.removeChild(ta); copied(ok);
+    }
+  });
+  document.body.appendChild(box);
+})();
+""" % json.dumps(data)
+    components.html(
+        "<script>(function(){try{var d=window.parent.document;var s=d.createElement('script');"
+        f"s.textContent={json.dumps(parent_code)};d.body.appendChild(s);}}catch(e){{}}}})();</script>",
+        height=0,
+    )
 
 
 def main():
@@ -5179,6 +5370,7 @@ def main():
             st.session_state["toolkit_input_source"] = "Extractions manager"
             st.rerun()
         render_credit_with_copy()
+        render_update_notice()
         return
 
     # ---- Proceed into the matching pipeline ----

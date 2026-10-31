@@ -6,6 +6,16 @@ features, **MAJOR** = changes that break existing habits or file formats.
 The running version is shown in the app's sidebar and in the credit line of
 the landing page, and every extraction records the version that produced it.
 
+## 1.2.0 — 2026-10-31
+
+### Added
+- **Update notice** on the landing page (bottom-right): when a newer feature
+  version is published on GitHub (1.2 → 1.3, 1 → 2), the app shows what's
+  new, the update steps from DOCKER.md with a **Copy commands** button, and a
+  link to the release notes. Fix-only releases (1.2.1) don't trigger it.
+  The notice can be dismissed; it comes back for the next version.
+  The check runs at most every 6 hours and stays silent when offline.
+
 ## 1.1.0 — 2026-10-31
 
 ### Added
