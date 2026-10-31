@@ -32,6 +32,14 @@ from datetime import datetime
 import streamlit as st
 
 # ============================================================
+# Version — increase it at every published change and add a matching
+# section to CHANGELOG.md and a GitHub release tagged v<APP_VERSION>.
+# MAJOR.MINOR.PATCH: PATCH = bug fixes, MINOR = new features,
+# MAJOR = changes that break existing habits or file formats.
+# ============================================================
+APP_VERSION = "1.1.0"
+
+# ============================================================
 # Shared state that MUST persist across Streamlit reruns
 # (used by the MediaCloud tool's background extraction jobs)
 # ============================================================
@@ -79,6 +87,7 @@ def create_run(pipeline, label, total=0, extra=None):
         "current": "", "error_message": "", "connection_lost": False,
         "eta_seconds": None,
         "cancel_requested": False,
+        "app_version": APP_VERSION,
     }
     if extra:
         meta.update(extra)
@@ -3493,6 +3502,7 @@ coverage volume evolved, before any saving/filtering. Use "View by" to switch gr
             output_name = f"{job_id}_corpus.txt"
             summary_lines = [
                 "MediaCloud extraction — summary log",
+                f"IRaMuTeQ corpus construction toolkit, version {APP_VERSION}",
                 "",
                 f"Date and time of extraction: {extraction_started_at.strftime('%Y-%m-%d %H:%M:%S')}",
                 f"Input CSV: {uploaded.name if uploaded is not None else 'unknown'} ({_format_bytes(uploaded.size)})" if uploaded is not None else "Input CSV: unknown",
@@ -4190,6 +4200,7 @@ def tiktok_finalize_outputs(run_id, status_label=None):
     meta = read_run_meta(run_id) or {}
     summary = [
         "TikTok Research API → IRaMuTeQ — summary log",
+        f"IRaMuTeQ corpus construction toolkit, version {meta.get('app_version') or APP_VERSION}",
         "=" * 60,
         f"Run: {run_id}",
         f"Label: {meta.get('label', '')}",
@@ -4892,7 +4903,8 @@ def render_recent_extractions():
                             if st.button("✏️", key=f"edit_name_{run_id}", help="Rename extraction"):
                                 st.session_state[edit_key] = True
                                 st.rerun(scope="fragment")
-                    st.caption(f"{started_at} · {status_badge}")
+                    _ver = f" · v{meta['app_version']}" if meta.get("app_version") else ""
+                    st.caption(f"{started_at} · {status_badge}{_ver}")
                 with top[1]:
                     total = max(meta.get("total", 0), 0)
                     if total:
@@ -5009,9 +5021,9 @@ def render_recent_extractions():
             height=0,
         )
 
-APP_CREDIT = "Created by Panos Tsimpoukis, LERASS (UT) · PhEPoC-ST (NTUA)"
+APP_CREDIT = f"Created by Panos Tsimpoukis, LERASS (UT) · PhEPoC-ST (NTUA) · v{APP_VERSION}"
 APP_CITATION = (
-    "Tsimpoukis, P. (2026). IRaMuTeQ corpus construction toolkit [Computer software]. "
+    f"Tsimpoukis, P. (2026). IRaMuTeQ corpus construction toolkit (Version {APP_VERSION}) [Computer software]. "
     "LERASS, Université de Toulouse · PhEPoC-ST, NTUA. https://github.com/panagiotix/corpusiramuteq"
 )
 
@@ -5177,6 +5189,8 @@ def main():
         if st.button("← Change input source", use_container_width=True):
             st.session_state["toolkit_input_source"] = None
             st.rerun()
+        st.caption(f"IRaMuTeQ corpus construction · version {APP_VERSION} · "
+                   "[changelog](https://github.com/panagiotix/corpusiramuteq/blob/main/CHANGELOG.md)")
         st.markdown("---")
 
     if chosen in ("Meta Content Library", "Any CSV"):

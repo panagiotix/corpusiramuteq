@@ -47,6 +47,17 @@ Once it's running, open your browser to:
 http://localhost:8501
 ```
 
+## Versions
+
+The current version is shown in the app's sidebar and on the landing page.
+What changed in each version is listed in **[CHANGELOG.md](CHANGELOG.md)**,
+and each version is published as a
+[GitHub release](https://github.com/panagiotix/corpusiramuteq/releases).
+To update, download the latest release and rebuild the app as described in
+[DOCKER.md](DOCKER.md).
+
 ## Credits
 
 Created by Panos Tsimpoukis, LERASS (UT) · PhEPoC-ST (NTUA).
+
+To cite the tool, use the **Copy citation** button on the landing page.
